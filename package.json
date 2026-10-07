@@ -19,7 +19,8 @@
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
     "clean": "node -e \"require('fs').rmSync('dist', { recursive: true, force: true })\"",
-    "prepare": "npm run clean && npm run build",
+    "hooks": "git config core.hooksPath .githooks || exit 0",
+    "prepare": "npm run clean && npm run build && npm run hooks",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
