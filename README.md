@@ -44,13 +44,15 @@ Node 20 ou plus.
 
 ## Utilisation dans une application
 
-Tant que la bibliothèque n'est pas publiée, on la référence par chemin :
+Tant que la bibliothèque n'est pas publiée sur npm, on la référence par son dépôt Git :
 
 ```json
-{ "dependencies": { "budget-lib": "file:../budget-lib" } }
+{ "dependencies": { "budget-lib": "git+https://github.com/cgreg21/budget-lib.git" } }
 ```
 
-(`file:../../budget-lib` depuis `nativescript/budget-mobile`.) `npm install` compile alors `dist/`.
+`npm install` récupère le dépôt (le dossier `dist/` y est versionné). Pour développer la
+bibliothèque en local en même temps qu'une application, utiliser `npm link` ou
+`npm install ../budget-lib` temporairement, sans committer ce changement.
 
 ## Migration des applications
 
