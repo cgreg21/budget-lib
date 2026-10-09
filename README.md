@@ -23,6 +23,8 @@ par exemple, que NativeScript refuse).
 | `backup` | sauvegarde complète : création, lecture, remplacement ou fusion idempotente |
 | `csv` | export et import tolérant des transactions pour un tableur |
 | `pie-chart` | parts et couleurs d'un camembert par catégorie |
+| `bank` | import bancaire : transactions d'Enable Banking → transactions du budget (catégorie devinée, identifiants stables), adresse de retour, fenêtre d'import |
+| `enable-banking` | client de l'API Enable Banking (jeton, appels, pagination, erreurs) ; le transport HTTP et la signature RSA sont fournis par l'application |
 
 Tout est exporté depuis le point d'entrée : `import { filterTransactions, mergeMonth } from 'budget-lib'`.
 
