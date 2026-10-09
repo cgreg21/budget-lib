@@ -1,0 +1,1 @@
+{"version":3,"file":"calendar-ics.d.ts","sourceRoot":"","sources":["../src/calendar-ics.ts"],"names":[],"mappings":"AAOA,OAAO,KAAK,EAAE,WAAW,EAAmB,MAAM,kBAAkB,CAAA;AAEpE,eAAO,MAAM,UAAU,YAAY,CAAA;AAuCnC,qEAAqE;AACrE,wBAAgB,gBAAgB,CAAC,WAAW,EAAE,WAAW,EAAE,GAAG,GAAE,IAAiB,GAAG,MAAM,CAsBzF;AA+BD,4FAA4F;AAC5F,wBAAgB,gBAAgB,CAAC,GAAG,EAAE,MAAM,GAAG,WAAW,GAAG,IAAI,CAwChE"}

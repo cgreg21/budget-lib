@@ -18,12 +18,14 @@ par exemple, que NativeScript refuse).
 | `category-icons` | noms d'icônes de catégorie partagés et conversion des anciens emoji |
 | `balance` | seuils du solde et niveau (`critical` → `high`) |
 | `general-settings` | préférences d'affichage (langue, devise, formats, thème) |
-| `remote` | configuration du serveur distant (WebDAV, iCloud), états, chemins et URL des fichiers |
-| `sync-merge` | fusion à trois voies (base / local / distant) des fichiers du budget |
 | `backup` | sauvegarde complète : création, lecture, remplacement ou fusion idempotente |
+| `calendar-ics` | une transaction ↔ un événement iCalendar « journée entière » (champs `X-BUDGET-*`) |
+| `caldav` | client CalDAV minimal (config, PROPFIND/REPORT/PUT/DELETE, Basic) ; le transport HTTP est fourni par l'application |
+| `calendar-sync` | synchronisation à trois voies (référence / local / agenda) des transactions ; l'agenda l'emporte en cas de conflit |
 | `csv` | export et import tolérant des transactions pour un tableur |
 | `pie-chart` | parts et couleurs d'un camembert par catégorie |
 | `bank` | import bancaire : transactions d'Enable Banking → transactions du budget (catégorie devinée, identifiants stables), adresse de retour, fenêtre d'import |
+| `bank-state` | ce qu'une application retient de la connexion bancaire (réglages, accès, identifiants déjà importés) et la règle de l'import automatique |
 | `enable-banking` | client de l'API Enable Banking (jeton, appels, pagination, erreurs) ; le transport HTTP et la signature RSA sont fournis par l'application |
 
 Tout est exporté depuis le point d'entrée : `import { filterTransactions, mergeMonth } from 'budget-lib'`.
@@ -60,23 +62,13 @@ bibliothèque en local en même temps qu'une application, utiliser `npm link` ou
 
 **Fait** : les deux applications consomment cette bibliothèque ; les dossiers `src/domain/` (GTK) et
 `src/app/domain/` (mobile) ont été supprimés et leurs imports pointent sur `budget-lib`. Tous les
-noms exportés par le domaine GTK existent à l'identique (côté GTK, seul `RemoteState` gagne
-`'syncing'`, que le bureau n'émet jamais). Côté mobile,
-quatre noms ont changé :
-
-| Mobile (avant) | `budget-lib` |
-| --- | --- |
-| `RemoteProvider` | `RemoteProviderKind` |
-| `SyncState` | `RemoteState` |
-| `SETTINGS_FILES` | `REMOTE_SETTINGS_FILES` (+ `isRemoteSettingsFile`) |
-| `isRemoteConfig` (config sans `provider` acceptée) | `isStoredRemoteConfig` ; `isRemoteConfig` exige désormais le `provider` |
+noms exportés par le domaine GTK existent à l'identique. Le stockage WebDAV/iCloud a été remplacé
+par la synchronisation des transactions avec un agenda CalDAV (voir `calendar-sync`).
 
 Autres points à connaître :
 
 - `DEFAULT_GENERAL_SETTINGS.theme` vaut `system` (valeur du bureau) ; le mobile, sombre par défaut,
   le surcharge : `{ ...DEFAULT_GENERAL_SETTINGS, theme: 'dark' }`.
-- `SyncStatus` (mobile) étend `RemoteStatus` ; `isWritable` est la règle du bureau (lecture seule
-  hors ligne), le mobile ne l'utilise pas.
 - `categoryGlyph` et `icons.ts` (correspondance nom d'icône → glyphe Material Design Icons) restent
   dans le mobile ; `CATEGORY_ICON_CHOICES` ne porte plus que `name` et `legacyEmoji`.
 - Les imports internes portent l'extension `.js` (`module: nodenext`) : sans conséquence pour les
@@ -85,5 +77,5 @@ Autres points à connaître :
 ## Ce qui reste dans les applications
 
 Ce qui dépend d'une plateforme n'a pas sa place ici : stockage (fichiers JSON et trousseau côté
-GTK, SQLite et stockage sécurisé côté mobile), clients WebDAV et iCloud, traductions, formatage
+GTK, SQLite et stockage sécurisé côté mobile), traductions, formatage
 des montants et dates, widgets, graphiques et correspondance des icônes.

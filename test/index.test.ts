@@ -6,8 +6,7 @@ describe('public API', () => {
   it('exposes every module through the entry point', () => {
     for (const name of [
       'createArchive', 'balanceLevel', 'CATEGORY_ICON_CHOICES', 'DEFAULT_CATEGORIES', 'transactionsToCsv',
-      'DEFAULT_GENERAL_SETTINGS', 'monthKeyFrom', 'buildPieSlices', 'sortRecurrences', 'normalizeRemoteConfig',
-      'mergeMonth', 'filterTransactions', 'toBudgetTransactions', 'EnableBankingClient',
+      'DEFAULT_GENERAL_SETTINGS', 'monthKeyFrom', 'buildPieSlices', 'sortRecurrences', 'filterTransactions', 'toBudgetTransactions', 'EnableBankingClient',
     ]) {
       expect(lib, name).toHaveProperty(name)
     }
