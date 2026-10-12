@@ -6,6 +6,7 @@ import {
   icsToTransaction,
   parseMultistatus,
   planSync,
+  resolveHref,
   syncCalendar,
   transactionToIcs,
   type HttpRequest,
@@ -63,6 +64,23 @@ describe('ics', () => {
 
   it('ignores events that are not budget transactions', () => {
     expect(icsToTransaction('BEGIN:VCALENDAR\r\nBEGIN:VEVENT\r\nUID:x\r\nDTSTART:20261009T100000Z\r\nSUMMARY:Dentist\r\nEND:VEVENT\r\nEND:VCALENDAR')).toBeNull()
+  })
+})
+
+describe('resolveHref', () => {
+  const calendar = 'https://dav.example.org/cal/user/budget/'
+
+  it('keeps absolute URLs and anchors absolute paths at the origin', () => {
+    expect(resolveHref(calendar, 'https://other.example.org/x.ics')).toBe('https://other.example.org/x.ics')
+    expect(resolveHref(calendar, '/cal/user/budget/t1.ics')).toBe('https://dav.example.org/cal/user/budget/t1.ics')
+  })
+
+  it('resolves relative references against the calendar directory', () => {
+    expect(resolveHref(calendar, 't1.ics')).toBe('https://dav.example.org/cal/user/budget/t1.ics')
+    expect(resolveHref('https://dav.example.org/cal/user/budget', 't1.ics')).toBe('https://dav.example.org/cal/user/budget/t1.ics')
+    expect(resolveHref(calendar, './t1.ics')).toBe('https://dav.example.org/cal/user/budget/t1.ics')
+    expect(resolveHref(calendar, '../other/t1.ics')).toBe('https://dav.example.org/cal/user/other/t1.ics')
+    expect(resolveHref(calendar, '/a/./b/../c.ics')).toBe('https://dav.example.org/a/c.ics')
   })
 })
 

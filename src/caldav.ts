@@ -158,12 +158,27 @@ export const CALENDAR_QUERY_BODY = [
 
 const PROPFIND_BODY = '<?xml version="1.0" encoding="utf-8"?><d:propfind xmlns:d="DAV:"><d:prop><d:resourcetype/></d:prop></d:propfind>'
 
+/** `.` and `..` segments removed from an absolute path (RFC 3986 §5.2.4). */
+function normalizePath(path: string): string {
+  const out: string[] = []
+  for (const segment of path.split('/').slice(1)) {
+    if (segment === '.') continue
+    if (segment === '..') out.pop()
+    else out.push(segment)
+  }
+  return `/${out.join('/')}`
+}
+
 /** An absolute URL from the `href` of a response, resolved against the calendar address. */
 export function resolveHref(calendarUrl: string, href: string): string {
   if (/^https?:\/\//i.test(href)) return href
-  const origin = /^(https?:\/\/[^/]+)/i.exec(calendarUrl)?.[1] ?? ''
-  if (href.startsWith('/')) return `${origin}${href}`
-  return `${calendarUrl.replace(/\/+$/, '')}/${href}`
+  const parsed = /^(https?:\/\/[^/?#]+)([^?#]*)/i.exec(calendarUrl)
+  const origin = parsed?.[1] ?? ''
+  const basePath = parsed?.[2] ?? ''
+  if (href.startsWith('/')) return `${origin}${normalizePath(href)}`
+  // A relative reference is resolved against the directory of the calendar address.
+  const directory = basePath.endsWith('/') ? basePath : `${basePath}/`
+  return `${origin}${normalizePath(`${directory}${href}`)}`
 }
 
 export class CalDavClient {

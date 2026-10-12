@@ -18,15 +18,30 @@ describe('defaultBankState', () => {
     expect(state.config).toMatchObject({ importFrom: '2026-10-01', redirectUrl: 'app://bank', bankCountry: 'FR' })
     expect(state).toMatchObject({ session: null, pendingState: '', lastImportAt: '', importedIds: [] })
   })
+
+  it('leaves importFrom empty for an unreadable date', () => {
+    expect(defaultBankState('', 'r').config.importFrom).toBe('')
+    expect(defaultBankState('garbage', 'r').config.importFrom).toBe('')
+  })
 })
 
 describe('isBankState', () => {
   it('accepts what defaultBankState gives, and rejects anything else', () => {
     expect(isBankState(defaultBankState('2026-10-09', 'r'))).toBe(true)
+    expect(isBankState({ ...defaultBankState('2026-10-09', 'r'), session })).toBe(true)
     expect(isBankState(null)).toBe(false)
     expect(isBankState({})).toBe(false)
     expect(isBankState({ ...defaultBankState('2026-10-09', 'r'), importedIds: 'x' })).toBe(false)
     expect(isBankState({ ...defaultBankState('2026-10-09', 'r'), config: null })).toBe(false)
+  })
+
+  it('rejects a partial config, a malformed session or non-string ids', () => {
+    const base = defaultBankState('2026-10-09', 'r')
+    expect(isBankState({ ...base, config: { ...base.config, bankName: undefined } })).toBe(false)
+    expect(isBankState({ ...base, config: { ...base.config, bankConsentSeconds: '0' } })).toBe(false)
+    expect(isBankState({ ...base, session: { sessionId: 's' } })).toBe(false)
+    expect(isBankState({ ...base, session: { ...session, accounts: [{ uid: 'a' }] } })).toBe(false)
+    expect(isBankState({ ...base, importedIds: ['a', 1] })).toBe(false)
   })
 })
 
@@ -69,5 +84,9 @@ describe('rememberBankIds', () => {
     expect(next).toHaveLength(MAX_REMEMBERED_BANK_IDS)
     expect(next.slice(-2)).toEqual(['n1', 'n2'])
     expect(next[0]).toBe('k2')
+  })
+
+  it('never keeps an id twice', () => {
+    expect(rememberBankIds(['a', 'b', 'a'], ['b', 'c', 'c'])).toEqual(['a', 'b', 'c'])
   })
 })

@@ -21,12 +21,15 @@ export interface BankState {
     /** Imported once: a transaction deleted from the budget is not brought back by the next import. */
     importedIds: string[];
 }
-/** A fresh state: no access yet, importing from the first day of the month of `today` (YYYY-MM-DD). */
+/**
+ * A fresh state: no access yet, importing from the first day of the month of `today` (YYYY-MM-DD).
+ * An unreadable `today` gives an empty `importFrom`, which the UI validates with `isBankDate`.
+ */
 export declare function defaultBankState(today: string, redirectUrl: string): BankState;
 export declare function isBankState(value: unknown): value is BankState;
 export declare function isBankDate(text: string): boolean;
 /** Whether an unattended import is due: connected, access still valid, and the last one is old enough. */
 export declare function isBankAutoImportDue(state: BankState, expired: boolean, nowMs: number): boolean;
-/** The ids to remember after an import, newest last, bounded. */
+/** The ids to remember after an import, newest last, without duplicates, bounded. */
 export declare function rememberBankIds(known: readonly string[], added: readonly string[]): string[];
 //# sourceMappingURL=bank-state.d.ts.map

@@ -6,7 +6,7 @@
  *
  * The private key is not part of it: it belongs to the platform's secret store.
  */
-import type { BankSession } from './enable-banking.js'
+import type { BankAccount, BankSession } from './enable-banking.js'
 
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/
 
@@ -36,7 +36,10 @@ export interface BankState {
   importedIds: string[]
 }
 
-/** A fresh state: no access yet, importing from the first day of the month of `today` (YYYY-MM-DD). */
+/**
+ * A fresh state: no access yet, importing from the first day of the month of `today` (YYYY-MM-DD).
+ * An unreadable `today` gives an empty `importFrom`, which the UI validates with `isBankDate`.
+ */
 export function defaultBankState(today: string, redirectUrl: string): BankState {
   return {
     config: {
@@ -45,7 +48,7 @@ export function defaultBankState(today: string, redirectUrl: string): BankState 
       bankCountry: 'FR',
       bankConsentSeconds: 0,
       redirectUrl,
-      importFrom: `${today.slice(0, 8)}01`,
+      importFrom: isBankDate(today) ? `${today.trim().slice(0, 8)}01` : '',
     },
     session: null,
     pendingState: '',
@@ -54,16 +57,38 @@ export function defaultBankState(today: string, redirectUrl: string): BankState 
   }
 }
 
+function isBankConfig(value: unknown): value is BankConfig {
+  const candidate = value as Partial<BankConfig> | null
+  return typeof candidate === 'object' && candidate !== null
+    && typeof candidate.applicationId === 'string'
+    && typeof candidate.bankName === 'string'
+    && typeof candidate.bankCountry === 'string'
+    && typeof candidate.bankConsentSeconds === 'number' && Number.isFinite(candidate.bankConsentSeconds)
+    && typeof candidate.redirectUrl === 'string'
+    && typeof candidate.importFrom === 'string'
+}
+
+function isBankSession(value: unknown): value is BankSession {
+  const candidate = value as Partial<BankSession> | null
+  return typeof candidate === 'object' && candidate !== null
+    && typeof candidate.sessionId === 'string'
+    && typeof candidate.validUntil === 'string'
+    && Array.isArray(candidate.accounts)
+    && candidate.accounts.every((account: unknown) => {
+      const a = account as Partial<BankAccount> | null
+      return typeof a === 'object' && a !== null && typeof a.uid === 'string' && typeof a.label === 'string'
+    })
+}
+
 export function isBankState(value: unknown): value is BankState {
   const candidate = value as Partial<BankState> | null
   return typeof candidate === 'object' && candidate !== null
-    && typeof candidate.config === 'object' && candidate.config !== null
-    && typeof candidate.config.applicationId === 'string'
-    && typeof candidate.config.redirectUrl === 'string'
-    && typeof candidate.config.importFrom === 'string'
+    && isBankConfig(candidate.config)
+    && (candidate.session === null || isBankSession(candidate.session))
     && typeof candidate.pendingState === 'string'
     && typeof candidate.lastImportAt === 'string'
     && Array.isArray(candidate.importedIds)
+    && candidate.importedIds.every((id: unknown) => typeof id === 'string')
 }
 
 export function isBankDate(text: string): boolean {
@@ -77,7 +102,9 @@ export function isBankAutoImportDue(state: BankState, expired: boolean, nowMs: n
   return state.lastImportAt === '' || Number.isNaN(last) || nowMs - last >= BANK_AUTO_IMPORT_INTERVAL_MS
 }
 
-/** The ids to remember after an import, newest last, bounded. */
+/** The ids to remember after an import, newest last, without duplicates, bounded. */
 export function rememberBankIds(known: readonly string[], added: readonly string[]): string[] {
-  return [...known, ...added].slice(-MAX_REMEMBERED_BANK_IDS)
+  const seen = new Set(added)
+  const kept = known.filter((id) => !seen.has(id))
+  return [...new Set([...kept, ...added])].slice(-MAX_REMEMBERED_BANK_IDS)
 }
