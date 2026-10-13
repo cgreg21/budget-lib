@@ -50,6 +50,11 @@ describe('describeBankTransaction', () => {
     expect(describeBankTransaction(entry({ note: 'memo' }))).toBe('memo')
     expect(describeBankTransaction(entry({ note: 'x'.repeat(300) }))).toHaveLength(120)
   })
+
+  it('is empty when the bank says nothing at all', () => {
+    expect(describeBankTransaction(entry({}))).toBe('')
+    expect(describeBankTransaction(entry({ remittance_information: [' '], note: ' ' }))).toBe('')
+  })
 })
 
 describe('guessCategory', () => {
@@ -70,6 +75,10 @@ describe('guessCategory', () => {
 
   it('uses the first category when even the fallback is missing', () => {
     expect(guessCategory('???', 'expense', [{ name: 'Seule', icon: 'x' }])).toBe('Seule')
+  })
+
+  it('names the fallback category when there is no category at all', () => {
+    expect(guessCategory('???', 'expense', [])).toBe('Autres')
   })
 })
 

@@ -7,6 +7,7 @@ import { describe, expect, it } from 'vitest'
 import {
   BankApiError,
   BankTokenSource,
+  DEFAULT_CONSENT_SECONDS,
   EnableBankingClient,
   isSessionExpired,
   normalizePrivateKey,
@@ -50,6 +51,11 @@ describe('normalizePrivateKey', () => {
 
   it('returns an empty text when there is no key', () => {
     expect(normalizePrivateKey('hello')).toBe('')
+  })
+
+  it('keeps the envelope of a key without a body', () => {
+    expect(normalizePrivateKey('-----BEGIN RSA PRIVATE KEY-----\n\n-----END RSA PRIVATE KEY-----'))
+      .toBe('-----BEGIN RSA PRIVATE KEY-----\n\n-----END RSA PRIVATE KEY-----\n')
   })
 })
 
@@ -161,5 +167,45 @@ describe('EnableBankingClient', () => {
   it('tolerates an unreadable answer body', async () => {
     const { http } = fakeHttp([{ status: 200, body: 'not json' }])
     expect(await clientOf(http).listBanks('FR')).toEqual([])
+  })
+
+  it('tolerates an empty answer body and a missing list', async () => {
+    const { http } = fakeHttp([{ status: 200, body: '' }, { status: 200, body: {} }, { status: 200, body: {} }])
+    const client = clientOf(http)
+    expect(await client.listBanks('FR')).toEqual([])
+    expect(await client.listBanks('FR')).toEqual([])
+    expect(await client.transactions('acc', '2026-10-01')).toEqual([])
+  })
+
+  it('fills in the country and the consent duration a bank leaves out', async () => {
+    const { http } = fakeHttp([{ status: 200, body: { aspsps: [{ name: 'Banque' }] } }])
+    expect(await clientOf(http).listBanks('BE')).toEqual([{ name: 'Banque', country: 'BE', maximumConsentSeconds: DEFAULT_CONSENT_SECONDS }])
+  })
+
+  it('labels an account from what the bank gives, down to its uid', async () => {
+    const { http } = fakeHttp([{ status: 200, body: { session_id: 's', accounts: [
+      { uid: 'u1', name: 'Courant' },
+      { uid: 'u2', product: 'Livret', account_id: {} },
+      { uid: 'u3' },
+    ] } }])
+    const session = await clientOf(http).createSession('code')
+    expect(session.accounts.map((a) => a.label)).toEqual(['Courant', 'Livret', 'u3'])
+    expect(session.validUntil).toBe('')
+  })
+
+  it('refuses a session without accounts or without an id', async () => {
+    const { http } = fakeHttp([{ status: 200, body: { session_id: 's' } }, { status: 200, body: { accounts: [{ uid: 'u' }] } }])
+    await expect(clientOf(http).createSession('code')).rejects.toMatchObject({ kind: 'rejected' })
+    await expect(clientOf(http).createSession('code')).rejects.toMatchObject({ kind: 'rejected' })
+  })
+
+  it('describes a transport failure that is not an Error', async () => {
+    const http: BankHttp = async () => { throw 'boom' }
+    await expect(clientOf(http).listBanks('FR')).rejects.toMatchObject({ kind: 'network', message: 'boom', status: 0 })
+  })
+
+  it('reports the HTTP status when the failure carries no message', async () => {
+    const { http } = fakeHttp([{ status: 408, body: '' }])
+    await expect(clientOf(http).listBanks('FR')).rejects.toMatchObject({ kind: 'network', message: 'HTTP 408' })
   })
 })

@@ -8,6 +8,7 @@ import {
   planSync,
   resolveHref,
   syncCalendar,
+  transactionHash,
   transactionToIcs,
   type HttpRequest,
   type HttpResponse,
@@ -65,6 +66,41 @@ describe('ics', () => {
   it('ignores events that are not budget transactions', () => {
     expect(icsToTransaction('BEGIN:VCALENDAR\r\nBEGIN:VEVENT\r\nUID:x\r\nDTSTART:20261009T100000Z\r\nSUMMARY:Dentist\r\nEND:VEVENT\r\nEND:VCALENDAR')).toBeNull()
   })
+
+  it('omits the recurrence line for a one-off transaction', () => {
+    expect(transactionToIcs(tx())).not.toContain('X-BUDGET-RECURRENCE')
+  })
+
+  it('signs the human-readable amount by kind', () => {
+    expect(transactionToIcs(tx({ kind: 'income', amount: 3 }))).toContain('DESCRIPTION:+3')
+    expect(transactionToIcs(tx({ kind: 'expense', amount: 3 }))).toContain('DESCRIPTION:-3')
+  })
+
+  const event = (lines: string[]) => ['BEGIN:VCALENDAR', 'BEGIN:VEVENT', ...lines, 'END:VEVENT', 'END:VCALENDAR'].join('\r\n')
+  const minimal = ['UID:t1@budget', 'X-BUDGET-KIND:expense', 'X-BUDGET-AMOUNT:5', 'DTSTART;VALUE=DATE:20261009']
+
+  it('reads a minimal event, defaulting the texts and keeping the first of duplicated properties', () => {
+    const parsed = icsToTransaction(event([...minimal, 'X-BUDGET-RECURRENCE:', 'X-BUDGET-AMOUNT:99', 'no colon here', 'SUMMARY:a\\Nb\\nc']))
+    expect(parsed).toEqual({ id: 't1', date: '2026-10-09', description: 'a\nb\nc', category: '', kind: 'expense', amount: 5 })
+  })
+
+  it('accepts an UID without the budget suffix', () => {
+    expect(icsToTransaction(event(['UID:plain', ...minimal.slice(1)]))?.id).toBe('plain')
+  })
+
+  it('ignores properties outside the event and stops at its end', () => {
+    expect(icsToTransaction(`X-BUDGET-KIND:income\r\n${event(minimal)}\r\nSUMMARY:after`)).toMatchObject({ kind: 'expense', description: '' })
+  })
+
+  it.each([
+    ['an unknown kind', ['UID:t1@budget', 'X-BUDGET-KIND:gift', 'X-BUDGET-AMOUNT:5', 'DTSTART:20261009']],
+    ['a non-numeric amount', ['UID:t1@budget', 'X-BUDGET-KIND:expense', 'X-BUDGET-AMOUNT:five', 'DTSTART:20261009']],
+    ['an unreadable date', ['UID:t1@budget', 'X-BUDGET-KIND:expense', 'X-BUDGET-AMOUNT:5', 'DTSTART:today']],
+    ['an empty id', ['UID:@budget', 'X-BUDGET-KIND:expense', 'X-BUDGET-AMOUNT:5', 'DTSTART:20261009']],
+    ['no event at all', ['X-BUDGET-KIND:expense']],
+  ])('rejects %s', (_, lines) => {
+    expect(icsToTransaction(event(lines))).toBeNull()
+  })
 })
 
 describe('resolveHref', () => {
@@ -104,6 +140,32 @@ describe('planSync', () => {
     expect(plan.upload.map((u) => u.transaction.id)).toEqual(['a'])
     expect(plan.download.map((d) => d.transaction.id)).toEqual(['b'])
     expect(hashOf(tx())).toBe(1)
+  })
+
+  it('ignores remote events that are not transactions', () => {
+    const plan = planSync({}, [], [{ href: '/dentist.ics', transaction: null }])
+    expect(plan).toEqual({ upload: [], download: [], deleteRemote: [], deleteLocal: [], settled: {}, dropped: [] })
+  })
+
+  it('uploads a local edit onto the unchanged remote version', () => {
+    const remote = tx({ amount: 10 })
+    const baseline: SyncBaseline = { t1: { href: '/t1.ics', etag: '"1"', hash: transactionHash(remote) } }
+    const plan = planSync(baseline, [tx({ amount: 11 })], [{ href: '/t1.ics', etag: '"1"', transaction: remote }])
+    expect(plan.upload).toEqual([{ transaction: tx({ amount: 11 }), href: '/t1.ics', etag: '"1"' }])
+    expect(plan.download).toEqual([])
+  })
+
+  it('downloads the remote version when both sides changed or only the calendar did', () => {
+    const base = tx({ amount: 1 })
+    const baseline: SyncBaseline = { t1: { href: '/t1.ics', hash: transactionHash(base) } }
+    const remote = { href: '/t1.ics', transaction: tx({ amount: 2 }) }
+    expect(planSync(baseline, [tx({ amount: 3 })], [remote]).download).toHaveLength(1)
+    expect(planSync(baseline, [base], [remote]).download).toHaveLength(1)
+  })
+
+  it('forgets baseline entries that exist on neither side', () => {
+    const plan = planSync({ old: { href: '/old.ics', hash: 'h' } }, [], [])
+    expect(plan.dropped).toEqual(['old'])
   })
 })
 
@@ -176,5 +238,48 @@ describe('syncCalendar', () => {
 
   it('exposes CalendarError', () => {
     expect(new CalendarError('auth', 401, 'x')).toBeInstanceOf(Error)
+  })
+
+  it('drops baseline entries that vanished on both sides', async () => {
+    const out = await syncCalendar(client(fakeServer()), [], { ghost: { href: '/ghost.ics', hash: 'h' } })
+    expect(out.baseline).toEqual({})
+  })
+
+  it('skips an upload the server refuses as a conflict and retries it next time', async () => {
+    const s = fakeServer()
+    const conflicting = new CalDavClient({ calendarUrl: s.root, username: 'alice' }, 'secret', async (req) => {
+      if (req.method === 'PUT') return { status: 412, headers: {}, body: '' }
+      return s.transport(req)
+    })
+    const out = await syncCalendar(conflicting, [tx()], {})
+    expect(out.skipped).toBe(1)
+    expect(out.uploaded).toBe(0)
+    expect(out.baseline).toEqual({})
+    expect((await syncCalendar(client(s), [tx()], out.baseline)).uploaded).toBe(1)
+  })
+
+  it('skips a deletion the server refuses as a conflict', async () => {
+    const s = fakeServer()
+    const c = client(s)
+    const first = await syncCalendar(c, [tx()], {})
+    const failing = new CalDavClient({ calendarUrl: s.root, username: 'alice' }, 'secret', async (req) => {
+      if (req.method === 'DELETE') return { status: 412, headers: {}, body: '' }
+      return s.transport(req)
+    })
+    const out = await syncCalendar(failing, [], first.baseline)
+    expect(out.skipped).toBe(1)
+    expect(out.deleted).toBe(0)
+    expect(out.baseline.t1).toBeDefined()
+  })
+
+  it('propagates other errors', async () => {
+    const s = fakeServer()
+    const broken = new CalDavClient({ calendarUrl: s.root, username: 'alice' }, 'secret', async (req) => {
+      if (req.method === 'PUT') return { status: 500, headers: {}, body: '' }
+      return s.transport(req)
+    })
+    await expect(syncCalendar(broken, [tx()], {})).rejects.toMatchObject({ kind: 'server' })
+    const offline = new CalDavClient({ calendarUrl: s.root, username: 'alice' }, 'secret', async () => { throw new Error('offline') })
+    await expect(syncCalendar(offline, [], {})).rejects.toThrow('offline')
   })
 })
