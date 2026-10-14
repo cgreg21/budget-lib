@@ -26,6 +26,7 @@ export interface BankState {
  * An unreadable `today` gives an empty `importFrom`, which the UI validates with `isBankDate`.
  */
 export declare function defaultBankState(today: string, redirectUrl: string): BankState;
+export declare function isBankConfig(value: unknown): value is BankConfig;
 export declare function isBankState(value: unknown): value is BankState;
 export declare function isBankDate(text: string): boolean;
 /** Whether an unattended import is due: connected, access still valid, and the last one is old enough. */

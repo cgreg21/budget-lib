@@ -57,7 +57,7 @@ export function defaultBankState(today: string, redirectUrl: string): BankState 
   }
 }
 
-function isBankConfig(value: unknown): value is BankConfig {
+export function isBankConfig(value: unknown): value is BankConfig {
   const candidate = value as Partial<BankConfig> | null
   return typeof candidate === 'object' && candidate !== null
     && typeof candidate.applicationId === 'string'

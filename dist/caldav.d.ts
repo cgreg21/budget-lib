@@ -45,8 +45,6 @@ export interface RemoteEvent {
     etag?: string;
     transaction: Transaction | null;
 }
-/** Base64 of the UTF-8 text, without relying on `btoa`/`Buffer`. */
-export declare function base64Utf8(text: string): string;
 export interface MultistatusEntry {
     href: string;
     status: number;

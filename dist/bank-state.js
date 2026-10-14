@@ -23,7 +23,7 @@ export function defaultBankState(today, redirectUrl) {
         importedIds: [],
     };
 }
-function isBankConfig(value) {
+export function isBankConfig(value) {
     const candidate = value;
     return typeof candidate === 'object' && candidate !== null
         && typeof candidate.applicationId === 'string'

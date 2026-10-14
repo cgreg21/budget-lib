@@ -5,6 +5,7 @@
  * the web and desktop, the http module on mobile). That keeps this file pure
  * TypeScript and testable. Authentication is HTTP Basic.
  */
+import { base64Utf8 } from './bytes.js'
 import { icsToTransaction, transactionToIcs } from './calendar-ics.js'
 import type { Transaction } from './transaction.js'
 
@@ -77,33 +78,6 @@ export interface RemoteEvent {
   href: string
   etag?: string
   transaction: Transaction | null
-}
-
-const BASE64 = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/'
-
-function utf8Bytes(text: string): number[] {
-  const bytes: number[] = []
-  for (const char of text) {
-    const code = char.codePointAt(0) as number
-    if (code < 0x80) bytes.push(code)
-    else if (code < 0x800) bytes.push(0xc0 | (code >> 6), 0x80 | (code & 0x3f))
-    else if (code < 0x10000) bytes.push(0xe0 | (code >> 12), 0x80 | ((code >> 6) & 0x3f), 0x80 | (code & 0x3f))
-    else bytes.push(0xf0 | (code >> 18), 0x80 | ((code >> 12) & 0x3f), 0x80 | ((code >> 6) & 0x3f), 0x80 | (code & 0x3f))
-  }
-  return bytes
-}
-
-/** Base64 of the UTF-8 text, without relying on `btoa`/`Buffer`. */
-export function base64Utf8(text: string): string {
-  const bytes = utf8Bytes(text)
-  let out = ''
-  for (let i = 0; i < bytes.length; i += 3) {
-    const [a, b, c] = [bytes[i], bytes[i + 1], bytes[i + 2]]
-    out += BASE64[a >> 2] + BASE64[((a & 3) << 4) | ((b ?? 0) >> 4)]
-    out += b === undefined ? '=' : BASE64[((b & 15) << 2) | ((c ?? 0) >> 6)]
-    out += c === undefined ? '=' : BASE64[c & 63]
-  }
-  return out
 }
 
 function decodeEntities(text: string): string {
