@@ -1,3 +1,4 @@
+import type { Category } from './category.js';
 import type { Transaction } from './transaction.js';
 export interface CalendarConfig {
     /** Whether the transactions are actually exchanged with the calendar. */
@@ -44,6 +45,8 @@ export interface RemoteEvent {
     href: string;
     etag?: string;
     transaction: Transaction | null;
+    /** The category list, when this event is the category event. */
+    categories?: Category[] | null;
 }
 export interface MultistatusEntry {
     href: string;
@@ -74,6 +77,12 @@ export declare class CalDavClient {
         href: string;
         etag?: string;
     }>;
+    /** Same as `put`, for the event that carries the category list. */
+    putCategories(categories: readonly Category[], etag?: string, href?: string): Promise<{
+        href: string;
+        etag?: string;
+    }>;
+    private write;
     /** Deletes an event; one that is already gone counts as deleted. */
     remove(href: string, etag?: string): Promise<void>;
 }

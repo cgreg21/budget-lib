@@ -5,6 +5,7 @@
  * application. The budget-specific fields travel in X-BUDGET-* properties; an
  * event without them is not ours and is ignored.
  */
+import { isCategoryList, type Category } from './category.js'
 import type { Transaction, TransactionKind } from './transaction.js'
 
 export const UID_SUFFIX = '@budget'
@@ -100,8 +101,7 @@ function isoFromCompact(value: string): string | null {
   return ISO_DATE.test(iso) ? iso : null
 }
 
-/** The transaction an iCalendar text holds, or `null` when the event is not one of ours. */
-export function icsToTransaction(ics: string): Transaction | null {
+function eventProperties(ics: string): Map<string, Property> {
   let inEvent = false
   const props = new Map<string, Property>()
   for (const line of unfold(ics)) {
@@ -114,6 +114,61 @@ export function icsToTransaction(ics: string): Transaction | null {
     const prop = parseLine(line)
     if (prop !== null && !props.has(prop.name)) props.set(prop.name, prop)
   }
+  return props
+}
+
+/** UID of the single event that carries the category list (without `UID_SUFFIX`). */
+export const CATEGORIES_EVENT_ID = 'categories'
+/** Where the category event sits in the calendar: far from any real month, but still a valid all-day date. */
+const CATEGORIES_EVENT_DATE = '2000-01-01'
+const CATEGORIES_VERSION = 1
+
+/**
+ * The iCalendar text of the category list: one all-day event, understood by
+ * every application of the suite and ignored by older ones (it has no
+ * X-BUDGET-KIND). The list itself is JSON in X-BUDGET-CATEGORIES; the
+ * description only makes it readable in a calendar application.
+ */
+export function categoriesToIcs(categories: readonly Category[], now: Date = new Date()): string {
+  const payload = JSON.stringify({ version: CATEGORIES_VERSION, categories: categories.map(({ name, icon }) => ({ name, icon })) })
+  const lines = [
+    'BEGIN:VCALENDAR',
+    'VERSION:2.0',
+    'PRODID:-//Budget//Categories//FR',
+    'BEGIN:VEVENT',
+    `UID:${CATEGORIES_EVENT_ID}${UID_SUFFIX}`,
+    `DTSTAMP:${stamp(now)}`,
+    `DTSTART;VALUE=DATE:${compactDate(CATEGORIES_EVENT_DATE)}`,
+    `DTEND;VALUE=DATE:${compactDate(nextDay(CATEGORIES_EVENT_DATE))}`,
+    'SUMMARY:Budget - categories (do not delete)',
+    `DESCRIPTION:${escapeText(categories.map((category) => category.name).join(', '))}`,
+    'TRANSP:TRANSPARENT',
+    `X-BUDGET-CATEGORIES:${escapeText(payload)}`,
+    'END:VEVENT',
+    'END:VCALENDAR',
+  ]
+  return `${lines.map(fold).join('\r\n')}\r\n`
+}
+
+/** The category list an iCalendar text holds, or `null` when the event is not the category event or is malformed. */
+export function icsToCategories(ics: string): Category[] | null {
+  const raw = eventProperties(ics).get('X-BUDGET-CATEGORIES')?.value
+  if (raw === undefined) return null
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(unescapeText(raw))
+  } catch {
+    return null
+  }
+  if (typeof parsed !== 'object' || parsed === null) return null
+  const { version, categories } = parsed as { version?: unknown; categories?: unknown }
+  if (version !== CATEGORIES_VERSION || !isCategoryList(categories)) return null
+  return categories.map(({ name, icon }) => ({ name, icon }))
+}
+
+/** The transaction an iCalendar text holds, or `null` when the event is not one of ours. */
+export function icsToTransaction(ics: string): Transaction | null {
+  const props = eventProperties(ics)
 
   const uid = props.get('UID')?.value
   const kind = props.get('X-BUDGET-KIND')?.value.trim()

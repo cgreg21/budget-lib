@@ -1,4 +1,5 @@
 import { CalDavClient, type RemoteEvent } from './caldav.js';
+import { type Category } from './category.js';
 import type { Transaction } from './transaction.js';
 export interface BaselineEntry {
     /** Address of the event on the server. */
@@ -17,8 +18,29 @@ export interface SyncOutcome {
     deleted: number;
     /** Operations the server refused because the event changed meanwhile; the next run retries them. */
     skipped: number;
+    /** The category list to store locally, or `null` when it stays as it is (or was not given to the run). */
+    categories: Category[] | null;
 }
+/** Key under which `baseline` remembers the category event; no transaction id looks like it. */
+export declare const CATEGORIES_BASELINE_KEY = "@categories";
 export declare function transactionHash(t: Transaction): string;
+export declare function categoriesHash(categories: readonly Category[]): string;
+/** `categories` followed by the names in `names` that it lacks, with the default icon of each. */
+export declare function ensureCategories(categories: readonly Category[], names: Iterable<string>): Category[];
+/** The remote list, then the local categories it lacks: the calendar wins on order and icons. */
+export declare function mergeCategories(remote: readonly Category[], local: readonly Category[]): Category[];
+export interface CategoriesPlan {
+    /** The list both sides should end up with. */
+    list: Category[];
+    /** Whether the calendar must be updated to hold it. */
+    upload: boolean;
+}
+/**
+ * Pure decision for the category list, on the same three-way rule as the
+ * transactions; `used` are the category names the transactions refer to, so a
+ * category is never missing from the list. Both sides changed → the lists are merged.
+ */
+export declare function planCategories(base: BaselineEntry | undefined, local: readonly Category[], remote: readonly Category[] | undefined, used: Iterable<string>): CategoriesPlan;
 export interface SyncPlan {
     upload: {
         transaction: Transaction;
@@ -43,6 +65,10 @@ export interface SyncPlan {
 }
 /** Pure decision: which operations bring both sides in line. */
 export declare function planSync(baseline: SyncBaseline, local: readonly Transaction[], remote: readonly RemoteEvent[]): SyncPlan;
-/** One synchronisation run. Network failures propagate; per-event conflicts are skipped. */
-export declare function syncCalendar(client: CalDavClient, local: readonly Transaction[], baseline: SyncBaseline): Promise<SyncOutcome>;
+/**
+ * One synchronisation run. Network failures propagate; per-event conflicts are skipped.
+ * Pass the local `categories` to synchronise the category list too: the result is
+ * in `outcome.categories` (null when the local list is already right).
+ */
+export declare function syncCalendar(client: CalDavClient, local: readonly Transaction[], baseline: SyncBaseline, categories?: readonly Category[]): Promise<SyncOutcome>;
 //# sourceMappingURL=calendar-sync.d.ts.map

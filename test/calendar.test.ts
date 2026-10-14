@@ -1,10 +1,18 @@
-import { describe, expect, it } from 'vitest'
+﻿import { describe, expect, it } from 'vitest'
 import {
+  CATEGORIES_BASELINE_KEY,
   CalDavClient,
   CalendarError,
+  DEFAULT_CATEGORY_ICON,
   base64Utf8,
+  categoriesHash,
+  categoriesToIcs,
+  ensureCategories,
+  icsToCategories,
   icsToTransaction,
+  mergeCategories,
   parseMultistatus,
+  planCategories,
   planSync,
   resolveHref,
   syncCalendar,
@@ -17,7 +25,7 @@ import {
 } from '../src/index.js'
 
 const tx = (over: Partial<Transaction> = {}): Transaction => ({
-  id: 't1', date: '2026-10-09', description: 'Café; crème, "bio"', category: 'Alimentation', kind: 'expense', amount: 12.5, ...over,
+  id: 't1', date: '2026-10-09', description: 'CafÃ©; crÃ¨me, "bio"', category: 'Alimentation', kind: 'expense', amount: 12.5, ...over,
 })
 
 /** A tiny in-memory CalDAV collection. */
@@ -52,7 +60,7 @@ function fakeServer(password = 'secret') {
 
 describe('ics', () => {
   it('round-trips a transaction, including special characters and a recurrence', () => {
-    const t = tx({ recurrenceId: 'r9', description: 'Une très longue description, avec; des "caractères" spéciaux et accentués — '.repeat(3) })
+    const t = tx({ recurrenceId: 'r9', description: 'Une trÃ¨s longue description, avec; des "caractÃ¨res" spÃ©ciaux et accentuÃ©s â€” '.repeat(3) })
     expect(icsToTransaction(transactionToIcs(t))).toEqual(t)
   })
 
@@ -283,3 +291,144 @@ describe('syncCalendar', () => {
     await expect(syncCalendar(offline, [], {})).rejects.toThrow('offline')
   })
 })
+
+
+describe('category synchronisation', () => {
+  const client = (s: ReturnType<typeof fakeServer>) => new CalDavClient({ calendarUrl: s.root, username: 'alice' }, 'secret', s.transport)
+  const food = { name: 'Alimentation', icon: 'emoji-food-symbolic' }
+  const pets = { name: 'Animaux', icon: 'emoji-nature-symbolic' }
+  const trips = { name: 'Voyages', icon: 'emoji-travel-symbolic' }
+
+  it('round-trips the list through its event, which is not a transaction', () => {
+    const ics = categoriesToIcs([food, { name: 'CafÃ©, "crÃ¨me"; x', icon: 'i' }])
+    expect(icsToCategories(ics)).toEqual([food, { name: 'CafÃ©, "crÃ¨me"; x', icon: 'i' }])
+    expect(icsToTransaction(ics)).toBeNull()
+    expect(ics).toContain('UID:categories@budget')
+  })
+
+  it('rejects events that are not a valid category list', () => {
+    expect(icsToCategories(transactionToIcs(tx()))).toBeNull()
+    const wrap = (value: string) => `BEGIN:VEVENT\r\nX-BUDGET-CATEGORIES:${value}\r\nEND:VEVENT`
+    expect(icsToCategories(wrap('not json'))).toBeNull()
+    expect(icsToCategories(wrap('42'))).toBeNull()
+    expect(icsToCategories(wrap('null'))).toBeNull()
+    expect(icsToCategories(wrap('{"version":2\\,"categories":[]}'))).toBeNull()
+    expect(icsToCategories(wrap('{"version":1\\,"categories":[]}'))).toBeNull()
+  })
+
+  it('ensureCategories appends the missing names with their default icon', () => {
+    expect(ensureCategories([food], ['Alimentation', '', 'Logement', 'Logement', 'Inconnue'])).toEqual([
+      food,
+      { name: 'Logement', icon: 'user-home-symbolic' },
+      { name: 'Inconnue', icon: DEFAULT_CATEGORY_ICON },
+    ])
+  })
+
+  it('merges with the remote order and icons first', () => {
+    const local = [{ name: 'Alimentation', icon: 'other' }, pets]
+    expect(mergeCategories([trips, food], local)).toEqual([trips, food, pets])
+    expect(mergeCategories([], local)).toEqual(local)
+  })
+
+  describe('planCategories', () => {
+    const entry = (list: typeof food[]) => ({ href: '/c.ics', hash: categoriesHash(list) })
+
+    it('uploads when the calendar has no list', () => {
+      expect(planCategories(undefined, [food], undefined, [])).toEqual({ list: [food], upload: true })
+      expect(planCategories(undefined, [], undefined, [])).toEqual({ list: [], upload: false })
+    })
+
+    it('does nothing when both sides agree', () => {
+      expect(planCategories(undefined, [food], [food], ['Alimentation'])).toEqual({ list: [food], upload: false })
+    })
+
+    it('uploads a local change and downloads a remote one', () => {
+      expect(planCategories(entry([food]), [food, pets], [food], [])).toEqual({ list: [food, pets], upload: true })
+      expect(planCategories(entry([food]), [food], [food, pets], [])).toEqual({ list: [food, pets], upload: false })
+    })
+
+    it('merges when both sides changed, or when there is no baseline', () => {
+      expect(planCategories(entry([food]), [food, pets], [food, trips], [])).toEqual({ list: [food, trips, pets], upload: true })
+      expect(planCategories(undefined, [pets], [trips], [])).toEqual({ list: [trips, pets], upload: true })
+    })
+
+    it('adds the categories the transactions use', () => {
+      const plan = planCategories(entry([food]), [food], [food], ['Logement'])
+      expect(plan.list).toHaveLength(2)
+      expect(plan.upload).toBe(true)
+    })
+  })
+
+  it('syncs the list between two devices and keeps every used category', async () => {
+    const s = fakeServer()
+    const c = client(s)
+
+    let a = await syncCalendar(c, [tx({ id: 'a1', category: 'Animaux' })], {}, [food, pets])
+    expect(a.categories).toBeNull()
+    expect(s.events.has('/cal/categories.ics')).toBe(true)
+    expect(a.baseline[CATEGORIES_BASELINE_KEY]).toBeDefined()
+    expect(Object.keys(a.baseline).filter((k) => k !== CATEGORIES_BASELINE_KEY)).toEqual(['a1'])
+
+    // A brand-new device receives the transactions and the whole list, in order.
+    const b = await syncCalendar(c, [], {}, [food])
+    expect(b.upsertLocal.map((t) => t.id)).toEqual(['a1'])
+    expect(b.categories).toEqual([food, pets])
+
+    // B adds a category; A gets it, then everything is stable.
+    const b2 = await syncCalendar(c, b.upsertLocal, b.baseline, [food, pets, trips])
+    expect(b2.categories).toBeNull()
+    a = await syncCalendar(c, [tx({ id: 'a1', category: 'Animaux' })], a.baseline, [food, pets])
+    expect(a.categories).toEqual([food, pets, trips])
+    const stable = await syncCalendar(c, [tx({ id: 'a1', category: 'Animaux' })], a.baseline, [food, pets, trips])
+    expect([stable.uploaded, stable.downloaded, stable.deleted, stable.skipped, stable.categories]).toEqual([0, 0, 0, 0, null])
+  })
+
+  it('creates the categories of downloaded transactions that no list mentions', async () => {
+    const s = fakeServer()
+    const c = client(s)
+    await syncCalendar(c, [tx({ id: 'x', category: 'Inconnue' })], {})
+    const out = await syncCalendar(c, [], {}, [food])
+    expect(out.categories).toEqual([food, { name: 'Inconnue', icon: DEFAULT_CATEGORY_ICON }])
+    expect(icsToCategories(s.events.get('/cal/categories.ics')!.ics)).toEqual(out.categories)
+  })
+
+  it('ignores the categories of a deleted transaction', async () => {
+    const s = fakeServer()
+    const c = client(s)
+    const first = await syncCalendar(c, [tx({ id: 'x', category: 'Inconnue' })], {}, [food])
+    s.events.delete('/cal/x.ics')
+    const out = await syncCalendar(c, [tx({ id: 'x', category: 'Inconnue' })], first.baseline, [food])
+    expect(out.removeLocal).toEqual(['x'])
+    expect(out.categories).toBeNull()
+  })
+
+  it('leaves the list alone when no list is given', async () => {
+    const s = fakeServer()
+    const out = await syncCalendar(client(s), [tx()], {})
+    expect(out.categories).toBeNull()
+    expect(s.events.has('/cal/categories.ics')).toBe(false)
+  })
+
+  it('does not fail the run when the list cannot be written, and still applies it locally', async () => {
+    const s = fakeServer()
+    const readOnly = new CalDavClient({ calendarUrl: s.root, username: 'alice' }, 'secret', async (req) => {
+      if (req.method === 'PUT' && req.url.endsWith('/categories.ics')) return { status: 403, headers: {}, body: '' }
+      return s.transport(req)
+    })
+    const out = await syncCalendar(readOnly, [tx({ category: 'Inconnue' })], {}, [food])
+    expect(out.uploaded).toBe(1)
+    expect(out.skipped).toBe(1)
+    expect(out.categories).toEqual([food, { name: 'Inconnue', icon: DEFAULT_CATEGORY_ICON }])
+    expect(out.baseline[CATEGORIES_BASELINE_KEY]).toBeUndefined()
+  })
+
+  it('propagates network errors on the list', async () => {
+    const s = fakeServer()
+    const down = new CalDavClient({ calendarUrl: s.root, username: 'alice' }, 'secret', async (req) => {
+      if (req.method === 'PUT' && req.url.endsWith('/categories.ics')) throw new Error('offline')
+      return s.transport(req)
+    })
+    await expect(syncCalendar(down, [], {}, [food])).rejects.toThrow('offline')
+  })
+})
+

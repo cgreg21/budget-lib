@@ -6,7 +6,7 @@
  * TypeScript and testable. Authentication is HTTP Basic.
  */
 import { base64Utf8 } from './bytes.js';
-import { icsToTransaction, transactionToIcs } from './calendar-ics.js';
+import { CATEGORIES_EVENT_ID, categoriesToIcs, icsToCategories, icsToTransaction, transactionToIcs } from './calendar-ics.js';
 /** The password is deliberately absent: it belongs to each platform's secure storage. */
 export const DEFAULT_CALENDAR_CONFIG = { enabled: false, calendarUrl: '', username: '' };
 export const DISABLED_CALENDAR_STATUS = { state: 'disabled' };
@@ -140,15 +140,26 @@ export class CalDavClient {
         for (const entry of parseMultistatus(response.body)) {
             if (entry.status >= 300 || entry.calendarData === undefined)
                 continue;
-            events.push({ href: entry.href, etag: entry.etag, transaction: icsToTransaction(entry.calendarData) });
+            const transaction = icsToTransaction(entry.calendarData);
+            const event = { href: entry.href, etag: entry.etag, transaction };
+            const categories = transaction === null ? icsToCategories(entry.calendarData) : null;
+            if (categories !== null)
+                event.categories = categories;
+            events.push(event);
         }
         return events;
     }
     /** Creates the event (no `etag`) or replaces the version `etag` stands for. Returns the new etag, if the server says. */
     async put(transaction, etag, href) {
-        const target = href ?? this.hrefOf(transaction.id);
+        return this.write(transactionToIcs(transaction), etag, href ?? this.hrefOf(transaction.id));
+    }
+    /** Same as `put`, for the event that carries the category list. */
+    async putCategories(categories, etag, href) {
+        return this.write(categoriesToIcs(categories), etag, href ?? this.hrefOf(CATEGORIES_EVENT_ID));
+    }
+    async write(ics, etag, target) {
         const condition = etag === undefined ? { 'If-None-Match': '*' } : { 'If-Match': etag };
-        const response = await this.send('PUT', resolveHref(this.config.calendarUrl, target), { 'Content-Type': 'text/calendar; charset=utf-8', ...condition }, transactionToIcs(transaction));
+        const response = await this.send('PUT', resolveHref(this.config.calendarUrl, target), { 'Content-Type': 'text/calendar; charset=utf-8', ...condition }, ics);
         if (response.status < 200 || response.status >= 300)
             this.fail(response);
         return { href: target, etag: response.headers['etag'] };
