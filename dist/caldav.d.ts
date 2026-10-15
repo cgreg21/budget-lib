@@ -1,3 +1,4 @@
+import type { Recurrence } from './recurrence.js';
 import type { Category } from './category.js';
 import type { Transaction } from './transaction.js';
 export interface CalendarConfig {
@@ -83,6 +84,11 @@ export declare class CalDavClient {
     }>;
     /** Same as `put`, for the event that carries the category list. */
     putCategories(categories: readonly Category[], etag?: string, href?: string): Promise<{
+        href: string;
+        etag?: string;
+    }>;
+    /** Same as `put`, for the recurring event of a series. */
+    putRecurrence(recurrence: Recurrence, etag?: string, href?: string): Promise<{
         href: string;
         etag?: string;
     }>;

@@ -6,7 +6,7 @@
  * TypeScript and testable. Authentication is HTTP Basic.
  */
 import { base64Utf8 } from './bytes.js';
-import { CATEGORIES_EVENT_ID, categoriesToIcs, icsToCategories, icsToTransaction, transactionToIcs } from './calendar-ics.js';
+import { CATEGORIES_EVENT_ID, categoriesToIcs, icsToCategories, icsToTransaction, recurrenceEventId, recurrenceToIcs, transactionToIcs } from './calendar-ics.js';
 /** The password is deliberately absent: it belongs to each platform's secure storage. */
 export const DEFAULT_CALENDAR_CONFIG = { enabled: false, calendarUrl: '', username: '', syncIntervalMinutes: 0 };
 export const DISABLED_CALENDAR_STATUS = { state: 'disabled' };
@@ -160,6 +160,10 @@ export class CalDavClient {
     /** Same as `put`, for the event that carries the category list. */
     async putCategories(categories, etag, href) {
         return this.write(categoriesToIcs(categories), etag, href ?? this.hrefOf(CATEGORIES_EVENT_ID));
+    }
+    /** Same as `put`, for the recurring event of a series. */
+    async putRecurrence(recurrence, etag, href) {
+        return this.write(recurrenceToIcs(recurrence), etag, href ?? this.hrefOf(recurrenceEventId(recurrence.id)));
     }
     async write(ics, etag, target) {
         const condition = etag === undefined ? { 'If-None-Match': '*' } : { 'If-Match': etag };

@@ -6,7 +6,8 @@
  * TypeScript and testable. Authentication is HTTP Basic.
  */
 import { base64Utf8 } from './bytes.js'
-import { CATEGORIES_EVENT_ID, categoriesToIcs, icsToCategories, icsToTransaction, transactionToIcs } from './calendar-ics.js'
+import { CATEGORIES_EVENT_ID, categoriesToIcs, icsToCategories, icsToTransaction, recurrenceEventId, recurrenceToIcs, transactionToIcs } from './calendar-ics.js'
+import type { Recurrence } from './recurrence.js'
 import type { Category } from './category.js'
 import type { Transaction } from './transaction.js'
 
@@ -222,6 +223,11 @@ export class CalDavClient {
   /** Same as `put`, for the event that carries the category list. */
   async putCategories(categories: readonly Category[], etag?: string, href?: string): Promise<{ href: string; etag?: string }> {
     return this.write(categoriesToIcs(categories), etag, href ?? this.hrefOf(CATEGORIES_EVENT_ID))
+  }
+
+  /** Same as `put`, for the recurring event of a series. */
+  async putRecurrence(recurrence: Recurrence, etag?: string, href?: string): Promise<{ href: string; etag?: string }> {
+    return this.write(recurrenceToIcs(recurrence), etag, href ?? this.hrefOf(recurrenceEventId(recurrence.id)))
   }
 
   private async write(ics: string, etag: string | undefined, target: string): Promise<{ href: string; etag?: string }> {

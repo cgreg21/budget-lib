@@ -10,8 +10,10 @@
  * The application applies `upsertLocal` / `removeLocal` to its own storage and
  * keeps `baseline` for the next run.
  */
+import { recurrenceEventId } from './calendar-ics.js'
 import { CalDavClient, CalendarError, type RemoteEvent } from './caldav.js'
 import { DEFAULT_CATEGORIES, categoryIcon, findCategory, type Category } from './category.js'
+import type { Recurrence } from './recurrence.js'
 import type { Transaction } from './transaction.js'
 
 export interface BaselineEntry {
@@ -122,7 +124,7 @@ export function planSync(baseline: SyncBaseline, local: readonly Transaction[], 
   }
 
   for (const id of new Set([...locals.keys(), ...remotes.keys(), ...Object.keys(baseline)])) {
-    if (id === CATEGORIES_BASELINE_KEY) continue
+    if (id.startsWith('@')) continue
     const l = locals.get(id)
     const r = remotes.get(id)
     const base = baseline[id]
@@ -161,6 +163,7 @@ export async function syncCalendar(
   local: readonly Transaction[],
   baseline: SyncBaseline,
   categories?: readonly Category[],
+  recurrences?: readonly Recurrence[],
 ): Promise<SyncOutcome> {
   const remote = await client.list()
   const plan = planSync(baseline, local, remote)
@@ -203,7 +206,56 @@ export async function syncCalendar(
     outcome.deleted += 1
   }
   if (categories !== undefined) await syncCategoryList(client, categories, remote, outcome, local)
+  if (recurrences !== undefined) await syncRecurrenceEvents(client, recurrences, remote, outcome)
   return outcome
+}
+
+/** Key under which `baseline` remembers the recurring event of a series. */
+export const RECURRENCE_BASELINE_PREFIX = '@recurrence:'
+
+export function recurrenceHash(r: Recurrence): string {
+  return JSON.stringify([r.id, r.description, r.category, r.kind, r.amount, r.day, r.frequency, r.startMonth, r.occurrences ?? ''])
+}
+
+/** Publishes each series as a recurring event and removes the ones of deleted series; one way, local to calendar. */
+async function syncRecurrenceEvents(
+  client: CalDavClient,
+  recurrences: readonly Recurrence[],
+  remote: readonly RemoteEvent[],
+  outcome: SyncOutcome,
+): Promise<void> {
+  const next = outcome.baseline
+  const attempt = async (operation: () => Promise<void>): Promise<void> => {
+    try {
+      await operation()
+    } catch (error) {
+      if (error instanceof CalendarError) outcome.skipped += 1
+      else throw error
+    }
+  }
+  const live = new Set<string>()
+  for (const recurrence of recurrences) {
+    const key = RECURRENCE_BASELINE_PREFIX + recurrence.id
+    live.add(key)
+    const hash = recurrenceHash(recurrence)
+    const base = next[key]
+    if (base?.hash === hash) continue
+    const suffix = `/${encodeURIComponent(recurrenceEventId(recurrence.id))}.ics`
+    const existing = base ?? remote.find((event) => event.href.endsWith(suffix))
+    await attempt(async () => {
+      const saved = await client.putRecurrence(recurrence, existing?.etag, existing?.href)
+      next[key] = { href: saved.href, etag: saved.etag, hash }
+      outcome.uploaded += 1
+    })
+  }
+  for (const key of Object.keys(next)) {
+    if (!key.startsWith(RECURRENCE_BASELINE_PREFIX) || live.has(key)) continue
+    await attempt(async () => {
+      await client.remove(next[key].href, next[key].etag)
+      delete next[key]
+      outcome.deleted += 1
+    })
+  }
 }
 
 async function syncCategoryList(

@@ -20,6 +20,7 @@ import {
   transactionToIcs,
   type HttpRequest,
   type HttpResponse,
+  type Recurrence,
   type SyncBaseline,
   type Transaction,
 } from '../src/index.js'
@@ -184,6 +185,34 @@ describe('syncCalendar', () => {
     const s = fakeServer()
     await expect(client(s, 'bad').check()).rejects.toMatchObject({ kind: 'auth' })
     await expect(client(s).check()).resolves.toBeUndefined()
+  })
+
+  it('publishes a series as one recurring event, updates it, and removes it with the series', async () => {
+    const s = fakeServer()
+    const c = client(s)
+    const series: Recurrence = {
+      id: 'r1', description: 'Loyer', category: 'Logement', kind: 'expense', amount: 700,
+      day: 31, frequency: 'quarterly', startMonth: '2026-10', occurrences: 4,
+    }
+
+    let out = await syncCalendar(c, [], {}, undefined, [series])
+    expect(out.uploaded).toBe(1)
+    const [[href, event]] = [...s.events]
+    expect(href).toContain('recurrence-r1')
+    expect(event.ics.replace(/\r\n /g, '')).toContain('RRULE:FREQ=MONTHLY;INTERVAL=3;BYMONTHDAY=28,29,30,31;BYSETPOS=-1;COUNT=4')
+    expect(event.ics).not.toContain('X-BUDGET-KIND')
+
+    // Unchanged series: nothing is sent again.
+    out = await syncCalendar(c, [], out.baseline, undefined, [series])
+    expect(out.uploaded).toBe(0)
+
+    out = await syncCalendar(c, [], out.baseline, undefined, [{ ...series, frequency: 'monthly' }])
+    expect(out.uploaded).toBe(1)
+    expect(s.events.get(href)?.ics).toContain('INTERVAL=1;')
+
+    out = await syncCalendar(c, [], out.baseline, undefined, [])
+    expect(out.deleted).toBe(1)
+    expect(s.events.size).toBe(0)
   })
 
   it('syncs two devices through the calendar, including edits and deletions', async () => {

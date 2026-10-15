@@ -1,5 +1,6 @@
 import { CalDavClient, type RemoteEvent } from './caldav.js';
 import { type Category } from './category.js';
+import type { Recurrence } from './recurrence.js';
 import type { Transaction } from './transaction.js';
 export interface BaselineEntry {
     /** Address of the event on the server. */
@@ -70,5 +71,8 @@ export declare function planSync(baseline: SyncBaseline, local: readonly Transac
  * Pass the local `categories` to synchronise the category list too: the result is
  * in `outcome.categories` (null when the local list is already right).
  */
-export declare function syncCalendar(client: CalDavClient, local: readonly Transaction[], baseline: SyncBaseline, categories?: readonly Category[]): Promise<SyncOutcome>;
+export declare function syncCalendar(client: CalDavClient, local: readonly Transaction[], baseline: SyncBaseline, categories?: readonly Category[], recurrences?: readonly Recurrence[]): Promise<SyncOutcome>;
+/** Key under which `baseline` remembers the recurring event of a series. */
+export declare const RECURRENCE_BASELINE_PREFIX = "@recurrence:";
+export declare function recurrenceHash(r: Recurrence): string;
 //# sourceMappingURL=calendar-sync.d.ts.map

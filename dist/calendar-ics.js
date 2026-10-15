@@ -6,6 +6,7 @@
  * event without them is not ours and is ignored.
  */
 import { isCategoryList } from './category.js';
+import { occurrenceDate } from './recurrence.js';
 export const UID_SUFFIX = '@budget';
 const FOLD_AT = 70;
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
@@ -129,6 +130,50 @@ export function categoriesToIcs(categories, now = new Date()) {
         `DESCRIPTION:${escapeText(categories.map((category) => category.name).join(', '))}`,
         'TRANSP:TRANSPARENT',
         `X-BUDGET-CATEGORIES:${escapeText(payload)}`,
+        'END:VEVENT',
+        'END:VCALENDAR',
+    ];
+    return `${lines.map(fold).join('\r\n')}\r\n`;
+}
+const RECURRENCE_INTERVAL = { monthly: 1, quarterly: 3, yearly: 12 };
+/** UID of the recurring event of a series (without `UID_SUFFIX`). */
+export function recurrenceEventId(recurrenceId) {
+    return `recurrence-${recurrenceId}`;
+}
+/** The RRULE of a series; days past the 28th fall back on the last day of shorter months, like the app does. */
+function recurrenceRule(recurrence) {
+    const parts = ['FREQ=MONTHLY', `INTERVAL=${RECURRENCE_INTERVAL[recurrence.frequency]}`];
+    if (recurrence.day > 28) {
+        const days = Array.from({ length: recurrence.day - 27 }, (_, i) => 28 + i);
+        parts.push(`BYMONTHDAY=${days.join(',')}`, 'BYSETPOS=-1');
+    }
+    if (recurrence.occurrences !== undefined)
+        parts.push(`COUNT=${recurrence.occurrences}`);
+    return parts.join(';');
+}
+/**
+ * The iCalendar text of a series: one recurring all-day event, so the calendar
+ * shows it ahead of time. It has no X-BUDGET-KIND, so it is never read back as
+ * a transaction; the occurrences stay individual events.
+ */
+export function recurrenceToIcs(recurrence, now = new Date()) {
+    const first = occurrenceDate(recurrence, recurrence.startMonth);
+    const sign = recurrence.kind === 'income' ? '+' : '-';
+    const lines = [
+        'BEGIN:VCALENDAR',
+        'VERSION:2.0',
+        'PRODID:-//Budget//Recurrences//FR',
+        'BEGIN:VEVENT',
+        `UID:${escapeText(recurrenceEventId(recurrence.id))}${UID_SUFFIX}`,
+        `DTSTAMP:${stamp(now)}`,
+        `DTSTART;VALUE=DATE:${compactDate(first)}`,
+        `DTEND;VALUE=DATE:${compactDate(nextDay(first))}`,
+        `RRULE:${recurrenceRule(recurrence)}`,
+        `SUMMARY:${escapeText(recurrence.description)}`,
+        `CATEGORIES:${escapeText(recurrence.category)}`,
+        `DESCRIPTION:${sign}${recurrence.amount}`,
+        'TRANSP:TRANSPARENT',
+        'X-BUDGET-SERIES:1',
         'END:VEVENT',
         'END:VCALENDAR',
     ];
