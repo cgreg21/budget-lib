@@ -13,6 +13,10 @@ export interface Transaction {
 }
 /** A transaction that has not been persisted yet (no id assigned). */
 export type TransactionInput = Omit<Transaction, 'id'>;
+/** A transaction moved to the trash; `deletedAt` is the ISO date-time of the deletion. */
+export interface TrashedTransaction extends Transaction {
+    deletedAt: string;
+}
 export interface Totals {
     income: number;
     expense: number;
@@ -20,6 +24,8 @@ export interface Totals {
 }
 /** Type guard used when reading `transactions.json`: rejects anything malformed. */
 export declare function isTransactionArray(value: unknown): value is Transaction[];
+/** Type guard for a stored trash: transactions that all carry their deletion date. */
+export declare function isTrashedTransactionArray(value: unknown): value is TrashedTransaction[];
 /** Most recent transactions first. Returns a new array; the input is untouched. */
 export declare function sortByDateDesc(transactions: readonly Transaction[]): Transaction[];
 /** What the list is narrowed down to. `NO_FILTER` is the resting state. */

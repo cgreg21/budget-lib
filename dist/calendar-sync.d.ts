@@ -1,7 +1,7 @@
 import { CalDavClient, type RemoteEvent } from './caldav.js';
 import { type Category } from './category.js';
 import type { Recurrence } from './recurrence.js';
-import type { Transaction } from './transaction.js';
+import type { Transaction, TrashedTransaction } from './transaction.js';
 export interface BaselineEntry {
     /** Address of the event on the server. */
     href: string;
@@ -21,7 +21,14 @@ export interface SyncOutcome {
     skipped: number;
     /** The category list to store locally, or `null` when it stays as it is (or was not given to the run). */
     categories: Category[] | null;
+    /** Transactions trashed from the calendar side, to add to the local trash (when a trash was given to the run). */
+    trashAdded: TrashedTransaction[];
+    /** Ids of the local trash entries restored or emptied from the calendar side. */
+    trashRemoved: string[];
 }
+/** Key prefix under which `baseline` remembers a trashed event; no transaction id looks like it. */
+export declare const TRASH_BASELINE_PREFIX = "@trash:";
+export declare function trashHash(t: TrashedTransaction): string;
 /** Key under which `baseline` remembers the category event; no transaction id looks like it. */
 export declare const CATEGORIES_BASELINE_KEY = "@categories";
 export declare function transactionHash(t: Transaction): string;
@@ -71,7 +78,7 @@ export declare function planSync(baseline: SyncBaseline, local: readonly Transac
  * Pass the local `categories` to synchronise the category list too: the result is
  * in `outcome.categories` (null when the local list is already right).
  */
-export declare function syncCalendar(client: CalDavClient, local: readonly Transaction[], baseline: SyncBaseline, categories?: readonly Category[], recurrences?: readonly Recurrence[]): Promise<SyncOutcome>;
+export declare function syncCalendar(client: CalDavClient, local: readonly Transaction[], baseline: SyncBaseline, categories?: readonly Category[], recurrences?: readonly Recurrence[], trash?: readonly TrashedTransaction[]): Promise<SyncOutcome>;
 /** Key under which `baseline` remembers the recurring event of a series. */
 export declare const RECURRENCE_BASELINE_PREFIX = "@recurrence:";
 export declare function recurrenceHash(r: Recurrence): string;

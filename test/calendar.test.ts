@@ -220,6 +220,58 @@ describe('syncCalendar', () => {
     expect(s.events.size).toBe(0)
   })
 
+  it('moves a trashed transaction through the calendar and back, or removes it when emptied', async () => {
+    const s = fakeServer()
+    const c = client(s)
+    const item = tx({ id: 'a1' })
+
+    let baseA: SyncBaseline = {}
+    let out = await syncCalendar(c, [item], baseA, undefined, undefined, [])
+    baseA = out.baseline
+    let baseB: SyncBaseline = {}
+    out = await syncCalendar(c, [], baseB, undefined, undefined, [])
+    baseB = out.baseline
+    expect(out.upsertLocal).toHaveLength(1)
+
+    // A trashes it: the event stays, as a trashed one.
+    const trashed = { ...item, deletedAt: '2026-01-01T00:00:00.000Z' }
+    out = await syncCalendar(c, [], baseA, undefined, undefined, [trashed])
+    baseA = out.baseline
+    expect(s.events.size).toBe(1)
+
+    // B (still holding it live) deletes it and gets it in its trash.
+    out = await syncCalendar(c, [item], baseB, undefined, undefined, [])
+    baseB = out.baseline
+    expect(out.removeLocal).toEqual(['a1'])
+    expect(out.trashAdded).toEqual([trashed])
+
+    // Stable.
+    out = await syncCalendar(c, [], baseB, undefined, undefined, [trashed])
+    expect([out.uploaded, out.deleted, out.skipped, out.trashAdded.length, out.trashRemoved.length]).toEqual([0, 0, 0, 0, 0])
+
+    // A empties its trash: the event goes away and B's trash is emptied too.
+    out = await syncCalendar(c, [], baseA, undefined, undefined, [])
+    baseA = out.baseline
+    expect(s.events.size).toBe(0)
+    out = await syncCalendar(c, [], baseB, undefined, undefined, [trashed])
+    expect(out.trashRemoved).toEqual(['a1'])
+  })
+
+  it('restores a trashed transaction on the calendar', async () => {
+    const s = fakeServer()
+    const c = client(s)
+    const item = tx({ id: 'a1' })
+    const trashed = { ...item, deletedAt: '2026-01-01T00:00:00.000Z' }
+
+    let out = await syncCalendar(c, [], {}, undefined, undefined, [trashed])
+    const base = out.baseline
+    out = await syncCalendar(c, [item], base, undefined, undefined, [])
+    expect(out.uploaded).toBe(1)
+    const other = await syncCalendar(c, [], {}, undefined, undefined, [])
+    expect(other.upsertLocal).toEqual([item])
+    expect(other.trashAdded).toEqual([])
+  })
+
   it('syncs two devices through the calendar, including edits and deletions', async () => {
     const s = fakeServer()
     const c = client(s)

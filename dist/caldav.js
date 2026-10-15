@@ -6,7 +6,7 @@
  * TypeScript and testable. Authentication is HTTP Basic.
  */
 import { base64Utf8 } from './bytes.js';
-import { CATEGORIES_EVENT_ID, categoriesToIcs, icsToCategories, icsToTransaction, recurrenceEventId, recurrenceToIcs, transactionToIcs } from './calendar-ics.js';
+import { CATEGORIES_EVENT_ID, categoriesToIcs, icsToCategories, icsToTransaction, icsToTrashed, recurrenceEventId, recurrenceToIcs, transactionToIcs, trashedToIcs } from './calendar-ics.js';
 /** The password is deliberately absent: it belongs to each platform's secure storage. */
 export const DEFAULT_CALENDAR_CONFIG = { enabled: false, calendarUrl: '', username: '', syncIntervalMinutes: 0 };
 export const DISABLED_CALENDAR_STATUS = { state: 'disabled' };
@@ -146,7 +146,10 @@ export class CalDavClient {
                 continue;
             const transaction = icsToTransaction(entry.calendarData);
             const event = { href: entry.href, etag: entry.etag, transaction };
-            const categories = transaction === null ? icsToCategories(entry.calendarData) : null;
+            const trashed = transaction === null ? icsToTrashed(entry.calendarData) : null;
+            if (trashed !== null)
+                event.trashed = trashed;
+            const categories = transaction === null && trashed === null ? icsToCategories(entry.calendarData) : null;
             if (categories !== null)
                 event.categories = categories;
             events.push(event);
@@ -156,6 +159,10 @@ export class CalDavClient {
     /** Creates the event (no `etag`) or replaces the version `etag` stands for. Returns the new etag, if the server says. */
     async put(transaction, etag, href) {
         return this.write(transactionToIcs(transaction), etag, href ?? this.hrefOf(transaction.id));
+    }
+    /** Same as `put`, for a transaction in the trash. */
+    async putTrashed(transaction, etag, href) {
+        return this.write(trashedToIcs(transaction), etag, href ?? this.hrefOf(transaction.id));
     }
     /** Same as `put`, for the event that carries the category list. */
     async putCategories(categories, etag, href) {

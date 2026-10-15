@@ -1,6 +1,6 @@
 import type { Recurrence } from './recurrence.js';
 import type { Category } from './category.js';
-import type { Transaction } from './transaction.js';
+import type { Transaction, TrashedTransaction } from './transaction.js';
 export interface CalendarConfig {
     /** Whether the transactions are actually exchanged with the calendar. */
     enabled: boolean;
@@ -50,6 +50,8 @@ export interface RemoteEvent {
     href: string;
     etag?: string;
     transaction: Transaction | null;
+    /** Set when the event is a transaction in the trash (then `transaction` is null). */
+    trashed?: TrashedTransaction | null;
     /** The category list, when this event is the category event. */
     categories?: Category[] | null;
 }
@@ -79,6 +81,11 @@ export declare class CalDavClient {
     list(): Promise<RemoteEvent[]>;
     /** Creates the event (no `etag`) or replaces the version `etag` stands for. Returns the new etag, if the server says. */
     put(transaction: Transaction, etag?: string, href?: string): Promise<{
+        href: string;
+        etag?: string;
+    }>;
+    /** Same as `put`, for a transaction in the trash. */
+    putTrashed(transaction: TrashedTransaction, etag?: string, href?: string): Promise<{
         href: string;
         etag?: string;
     }>;

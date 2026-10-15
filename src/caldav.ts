@@ -6,10 +6,10 @@
  * TypeScript and testable. Authentication is HTTP Basic.
  */
 import { base64Utf8 } from './bytes.js'
-import { CATEGORIES_EVENT_ID, categoriesToIcs, icsToCategories, icsToTransaction, recurrenceEventId, recurrenceToIcs, transactionToIcs } from './calendar-ics.js'
+import { CATEGORIES_EVENT_ID, categoriesToIcs, icsToCategories, icsToTransaction, icsToTrashed, recurrenceEventId, recurrenceToIcs, transactionToIcs, trashedToIcs } from './calendar-ics.js'
 import type { Recurrence } from './recurrence.js'
 import type { Category } from './category.js'
-import type { Transaction } from './transaction.js'
+import type { Transaction, TrashedTransaction } from './transaction.js'
 
 export interface CalendarConfig {
   /** Whether the transactions are actually exchanged with the calendar. */
@@ -87,6 +87,8 @@ export interface RemoteEvent {
   href: string
   etag?: string
   transaction: Transaction | null
+  /** Set when the event is a transaction in the trash (then `transaction` is null). */
+  trashed?: TrashedTransaction | null
   /** The category list, when this event is the category event. */
   categories?: Category[] | null
 }
@@ -208,7 +210,9 @@ export class CalDavClient {
       if (entry.status >= 300 || entry.calendarData === undefined) continue
       const transaction = icsToTransaction(entry.calendarData)
       const event: RemoteEvent = { href: entry.href, etag: entry.etag, transaction }
-      const categories = transaction === null ? icsToCategories(entry.calendarData) : null
+      const trashed = transaction === null ? icsToTrashed(entry.calendarData) : null
+      if (trashed !== null) event.trashed = trashed
+      const categories = transaction === null && trashed === null ? icsToCategories(entry.calendarData) : null
       if (categories !== null) event.categories = categories
       events.push(event)
     }
@@ -218,6 +222,11 @@ export class CalDavClient {
   /** Creates the event (no `etag`) or replaces the version `etag` stands for. Returns the new etag, if the server says. */
   async put(transaction: Transaction, etag?: string, href?: string): Promise<{ href: string; etag?: string }> {
     return this.write(transactionToIcs(transaction), etag, href ?? this.hrefOf(transaction.id))
+  }
+
+  /** Same as `put`, for a transaction in the trash. */
+  async putTrashed(transaction: TrashedTransaction, etag?: string, href?: string): Promise<{ href: string; etag?: string }> {
+    return this.write(trashedToIcs(transaction), etag, href ?? this.hrefOf(transaction.id))
   }
 
   /** Same as `put`, for the event that carries the category list. */

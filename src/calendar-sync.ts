@@ -14,7 +14,7 @@ import { recurrenceEventId } from './calendar-ics.js'
 import { CalDavClient, CalendarError, type RemoteEvent } from './caldav.js'
 import { DEFAULT_CATEGORIES, categoryIcon, findCategory, type Category } from './category.js'
 import type { Recurrence } from './recurrence.js'
-import type { Transaction } from './transaction.js'
+import type { Transaction, TrashedTransaction } from './transaction.js'
 
 export interface BaselineEntry {
   /** Address of the event on the server. */
@@ -37,6 +37,95 @@ export interface SyncOutcome {
   skipped: number
   /** The category list to store locally, or `null` when it stays as it is (or was not given to the run). */
   categories: Category[] | null
+  /** Transactions trashed from the calendar side, to add to the local trash (when a trash was given to the run). */
+  trashAdded: TrashedTransaction[]
+  /** Ids of the local trash entries restored or emptied from the calendar side. */
+  trashRemoved: string[]
+}
+
+/** Key prefix under which `baseline` remembers a trashed event; no transaction id looks like it. */
+export const TRASH_BASELINE_PREFIX = '@trash:'
+
+export function trashHash(t: TrashedTransaction): string {
+  return JSON.stringify([transactionHash(t), t.deletedAt])
+}
+
+const eventIdOf = (event: RemoteEvent): string | undefined => event.transaction?.id ?? event.trashed?.id
+
+/**
+ * Brings the trash in line: a trashed transaction stays on the calendar as the same event, marked
+ * cancelled. Returns the remote list as it stands once done, plus calendar-side trash entries that
+ * wait for the transaction run to confirm the live copy is gone here too.
+ */
+async function syncTrash(
+  client: CalDavClient,
+  local: readonly Transaction[],
+  trash: readonly TrashedTransaction[],
+  fetched: readonly RemoteEvent[],
+  outcome: SyncOutcome,
+  attempt: (operation: () => Promise<void>) => Promise<void>,
+): Promise<{ remote: RemoteEvent[]; pending: RemoteEvent[] }> {
+  const next = outcome.baseline
+  const view = [...fetched]
+  const pending: RemoteEvent[] = []
+  const trashIds = new Set(trash.map((t) => t.id))
+  const liveIds = new Set(local.map((t) => t.id))
+
+  for (const item of trash) {
+    const key = TRASH_BASELINE_PREFIX + item.id
+    const index = view.findIndex((event) => eventIdOf(event) === item.id)
+    const event = index >= 0 ? view[index] : undefined
+    if (event?.trashed != null) {
+      next[key] = { href: event.href, etag: event.etag, hash: trashHash(item) }
+      delete next[item.id]
+      continue
+    }
+    if (next[key] !== undefined) {
+      // It was in the trash on both sides: the calendar now holds it live (restored) or no more (emptied).
+      outcome.trashRemoved.push(item.id)
+      delete next[key]
+      continue
+    }
+    await attempt(async () => {
+      const saved = await client.putTrashed(item, event?.etag, event?.href)
+      next[key] = { href: saved.href, etag: saved.etag, hash: trashHash(item) }
+      delete next[item.id]
+      const updated: RemoteEvent = { href: saved.href, etag: saved.etag, transaction: null, trashed: item }
+      if (index >= 0) view[index] = updated
+      else view.push(updated)
+      outcome.uploaded += 1
+    })
+  }
+
+  for (const event of [...view]) {
+    const item = event.trashed
+    if (item == null || trashIds.has(item.id)) continue
+    const key = TRASH_BASELINE_PREFIX + item.id
+    if (next[key] === undefined) {
+      if (liveIds.has(item.id)) pending.push(event)
+      else {
+        outcome.trashAdded.push(item)
+        next[key] = { href: event.href, etag: event.etag, hash: trashHash(item) }
+      }
+      continue
+    }
+    // Known as trashed, gone from the local trash: restored here, or emptied here.
+    const restored = local.find((t) => t.id === item.id)
+    await attempt(async () => {
+      if (restored !== undefined) {
+        const saved = await client.put(restored, event.etag, event.href)
+        next[restored.id] = { href: saved.href, etag: saved.etag, hash: transactionHash(restored) }
+        view[view.indexOf(event)] = { href: saved.href, etag: saved.etag, transaction: restored }
+        outcome.uploaded += 1
+      } else {
+        await client.remove(event.href, event.etag)
+        view.splice(view.indexOf(event), 1)
+        outcome.deleted += 1
+      }
+      delete next[key]
+    })
+  }
+  return { remote: view, pending }
 }
 
 /** Key under which `baseline` remembers the category event; no transaction id looks like it. */
@@ -164,13 +253,14 @@ export async function syncCalendar(
   baseline: SyncBaseline,
   categories?: readonly Category[],
   recurrences?: readonly Recurrence[],
+  trash?: readonly TrashedTransaction[],
 ): Promise<SyncOutcome> {
-  const remote = await client.list()
-  const plan = planSync(baseline, local, remote)
-  const next: SyncBaseline = { ...baseline, ...plan.settled }
-  for (const id of plan.dropped) delete next[id]
-
-  const outcome: SyncOutcome = { upsertLocal: [], removeLocal: [], baseline: next, uploaded: 0, downloaded: 0, deleted: 0, skipped: 0, categories: null }
+  const fetched = await client.list()
+  const next: SyncBaseline = { ...baseline }
+  const outcome: SyncOutcome = {
+    upsertLocal: [], removeLocal: [], baseline: next, uploaded: 0, downloaded: 0, deleted: 0, skipped: 0,
+    categories: null, trashAdded: [], trashRemoved: [],
+  }
 
   const attempt = async (operation: () => Promise<void>): Promise<void> => {
     try {
@@ -179,6 +269,20 @@ export async function syncCalendar(
       if (error instanceof CalendarError && (error.kind === 'conflict' || error.kind === 'not-found')) outcome.skipped += 1
       else throw error
     }
+  }
+
+  let remote: readonly RemoteEvent[] = fetched
+  let pendingTrash: RemoteEvent[] = []
+  if (trash !== undefined) ({ remote, pending: pendingTrash } = await syncTrash(client, local, trash, fetched, outcome, attempt))
+  const plan = planSync(next, local, remote)
+  Object.assign(next, plan.settled)
+  for (const id of plan.dropped) delete next[id]
+  // A trashed event of the calendar whose live copy is deleted here too is a new trash entry.
+  for (const event of pendingTrash) {
+    const item = event.trashed as TrashedTransaction
+    if (!plan.deleteLocal.includes(item.id)) continue
+    outcome.trashAdded.push(item)
+    next[TRASH_BASELINE_PREFIX + item.id] = { href: event.href, etag: event.etag, hash: trashHash(item) }
   }
 
   for (const item of plan.upload) {

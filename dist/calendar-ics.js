@@ -46,6 +46,16 @@ function eventColor(kind) {
 }
 /** The iCalendar text of a transaction. `now` only feeds DTSTAMP. */
 export function transactionToIcs(transaction, now = new Date()) {
+    return transactionEvent(transaction, now);
+}
+/**
+ * The iCalendar text of a trashed transaction: the same event, greyed out and marked cancelled, so
+ * it stays out of the way in calendars. `icsToTransaction` ignores it; `icsToTrashed` reads it back.
+ */
+export function trashedToIcs(transaction, now = new Date()) {
+    return transactionEvent(transaction, now, transaction.deletedAt);
+}
+function transactionEvent(transaction, now, deletedAt) {
     const lines = [
         'BEGIN:VCALENDAR',
         'VERSION:2.0',
@@ -58,7 +68,7 @@ export function transactionToIcs(transaction, now = new Date()) {
         `SUMMARY:${escapeText(transaction.description)}`,
         `CATEGORIES:${escapeText(transaction.category)}`,
         `DESCRIPTION:${transaction.kind === 'income' ? '+' : '-'}${transaction.amount}`,
-        `COLOR:${eventColor(transaction.kind)}`,
+        `COLOR:${deletedAt === undefined ? eventColor(transaction.kind) : 'gray'}`,
         'TRANSP:TRANSPARENT',
         `X-BUDGET-KIND:${transaction.kind}`,
         `X-BUDGET-AMOUNT:${transaction.amount}`,
@@ -66,6 +76,8 @@ export function transactionToIcs(transaction, now = new Date()) {
     if (transaction.recurrenceId !== undefined) {
         lines.push(`X-BUDGET-RECURRENCE:${escapeText(transaction.recurrenceId)}`);
     }
+    if (deletedAt !== undefined)
+        lines.push('STATUS:CANCELLED', `X-BUDGET-TRASHED:${escapeText(deletedAt)}`);
     lines.push('END:VEVENT', 'END:VCALENDAR');
     return `${lines.map(fold).join('\r\n')}\r\n`;
 }
@@ -204,9 +216,23 @@ export function icsToCategories(ics) {
         return null;
     return categories.map(({ name, icon }) => ({ name, icon }));
 }
-/** The transaction an iCalendar text holds, or `null` when the event is not one of ours. */
+/** The transaction an iCalendar text holds, or `null` when the event is not one of ours or is in the trash. */
 export function icsToTransaction(ics) {
     const props = eventProperties(ics);
+    if (props.has('X-BUDGET-TRASHED'))
+        return null;
+    return transactionFrom(props);
+}
+/** The trashed transaction an iCalendar text holds, or `null` when the event is not a trashed one of ours. */
+export function icsToTrashed(ics) {
+    const props = eventProperties(ics);
+    const deletedAt = props.get('X-BUDGET-TRASHED')?.value;
+    if (deletedAt === undefined || deletedAt === '')
+        return null;
+    const transaction = transactionFrom(props);
+    return transaction === null ? null : { ...transaction, deletedAt: unescapeText(deletedAt) };
+}
+function transactionFrom(props) {
     const uid = props.get('UID')?.value;
     const kind = props.get('X-BUDGET-KIND')?.value.trim();
     const amountText = props.get('X-BUDGET-AMOUNT')?.value.trim();

@@ -21,6 +21,10 @@ function isTransaction(value) {
 export function isTransactionArray(value) {
     return Array.isArray(value) && value.every(isTransaction);
 }
+/** Type guard for a stored trash: transactions that all carry their deletion date. */
+export function isTrashedTransactionArray(value) {
+    return isTransactionArray(value) && value.every((item) => typeof item.deletedAt === 'string');
+}
 /** Most recent transactions first. Returns a new array; the input is untouched. */
 export function sortByDateDesc(transactions) {
     return [...transactions].sort((a, b) => b.date.localeCompare(a.date));
