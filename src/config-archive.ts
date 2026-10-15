@@ -116,6 +116,7 @@ export function createConfigArchive(data: ConfigData, exportedAt = new Date().to
       enabled: data.calendar.enabled,
       calendarUrl: data.calendar.calendarUrl,
       username: data.calendar.username,
+      syncIntervalMinutes: data.calendar.syncIntervalMinutes ?? 0,
       proxyUrl: data.calendar.proxyUrl,
       password: data.calendar.password,
     },
@@ -129,6 +130,7 @@ function isCalendarConfigExport(value: unknown): value is CalendarConfigExport {
     && typeof c.enabled === 'boolean'
     && typeof c.calendarUrl === 'string'
     && typeof c.username === 'string'
+    && (c.syncIntervalMinutes === undefined || typeof c.syncIntervalMinutes === 'number')
     && typeof c.proxyUrl === 'string'
     && typeof c.password === 'string'
 }

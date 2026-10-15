@@ -6,6 +6,8 @@ export interface CalendarConfig {
     /** Address of the calendar collection, e.g. `https://cloud.example.org/remote.php/dav/calendars/alice/budget`. */
     calendarUrl: string;
     username: string;
+    /** Minutes between automatic synchronisations; 0 or absent turns the periodic sync off. */
+    syncIntervalMinutes?: number;
 }
 /** The password is deliberately absent: it belongs to each platform's secure storage. */
 export declare const DEFAULT_CALENDAR_CONFIG: CalendarConfig;
@@ -18,6 +20,8 @@ export interface CalendarStatus {
 }
 export declare const DISABLED_CALENDAR_STATUS: CalendarStatus;
 export declare function isCalendarConfig(value: unknown): value is CalendarConfig;
+/** Upper bound of the automatic synchronisation interval (one day). */
+export declare const MAX_SYNC_INTERVAL_MINUTES = 1440;
 export declare function normalizeCalendarConfig(config: CalendarConfig): CalendarConfig;
 export declare function isCalendarConfigComplete(config: CalendarConfig): boolean;
 export interface HttpRequest {

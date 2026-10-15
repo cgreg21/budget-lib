@@ -16,10 +16,12 @@ export interface CalendarConfig {
   /** Address of the calendar collection, e.g. `https://cloud.example.org/remote.php/dav/calendars/alice/budget`. */
   calendarUrl: string
   username: string
+  /** Minutes between automatic synchronisations; 0 or absent turns the periodic sync off. */
+  syncIntervalMinutes?: number
 }
 
 /** The password is deliberately absent: it belongs to each platform's secure storage. */
-export const DEFAULT_CALENDAR_CONFIG: CalendarConfig = { enabled: false, calendarUrl: '', username: '' }
+export const DEFAULT_CALENDAR_CONFIG: CalendarConfig = { enabled: false, calendarUrl: '', username: '', syncIntervalMinutes: 0 }
 
 export type CalendarState = 'disabled' | 'syncing' | 'online' | 'offline' | 'error'
 
@@ -36,12 +38,17 @@ export function isCalendarConfig(value: unknown): value is CalendarConfig {
   if (typeof value !== 'object' || value === null) return false
   const c = value as Partial<CalendarConfig>
   return typeof c.enabled === 'boolean' && typeof c.calendarUrl === 'string' && typeof c.username === 'string'
-}
+      && (c.syncIntervalMinutes === undefined || typeof c.syncIntervalMinutes === 'number')
+  }
+
+/** Upper bound of the automatic synchronisation interval (one day). */
+export const MAX_SYNC_INTERVAL_MINUTES = 1440
 
 export function normalizeCalendarConfig(config: CalendarConfig): CalendarConfig {
   const calendarUrl = config.calendarUrl.trim().replace(/\/+$/, '')
   const username = config.username.trim()
-  return { enabled: config.enabled && calendarUrl !== '' && username !== '', calendarUrl, username }
+  const syncIntervalMinutes = Math.min(MAX_SYNC_INTERVAL_MINUTES, Math.max(0, Math.floor(Number.isFinite(config.syncIntervalMinutes) ? config.syncIntervalMinutes! : 0)))
+  return { enabled: config.enabled && calendarUrl !== '' && username !== '', calendarUrl, username, syncIntervalMinutes }
 }
 
 export function isCalendarConfigComplete(config: CalendarConfig): boolean {

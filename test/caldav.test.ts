@@ -9,6 +9,7 @@ import {
   CalendarError,
   DEFAULT_CALENDAR_CONFIG,
   DISABLED_CALENDAR_STATUS,
+  MAX_SYNC_INTERVAL_MINUTES,
   base64Utf8,
   isCalendarConfig,
   isCalendarConfigComplete,
@@ -41,7 +42,7 @@ function scripted(answers: (Partial<HttpResponse> | Error)[]) {
 
 describe('calendar configuration', () => {
   it('exposes the defaults', () => {
-    expect(DEFAULT_CALENDAR_CONFIG).toEqual({ enabled: false, calendarUrl: '', username: '' })
+    expect(DEFAULT_CALENDAR_CONFIG).toEqual({ enabled: false, calendarUrl: '', username: '', syncIntervalMinutes: 0 })
     expect(DISABLED_CALENDAR_STATUS).toEqual({ state: 'disabled' })
   })
 
@@ -56,10 +57,18 @@ describe('calendar configuration', () => {
 
   it('trims the fields and only keeps it enabled when complete', () => {
     expect(normalizeCalendarConfig({ enabled: true, calendarUrl: ' https://dav.test/cal// ', username: ' alice ' }))
-      .toEqual({ enabled: true, calendarUrl: 'https://dav.test/cal', username: 'alice' })
+      .toEqual({ enabled: true, calendarUrl: 'https://dav.test/cal', username: 'alice', syncIntervalMinutes: 0 })
     expect(normalizeCalendarConfig({ enabled: true, calendarUrl: '', username: 'alice' }).enabled).toBe(false)
     expect(normalizeCalendarConfig({ enabled: true, calendarUrl: 'https://dav.test', username: ' ' }).enabled).toBe(false)
     expect(normalizeCalendarConfig({ enabled: false, calendarUrl: 'https://dav.test', username: 'alice' }).enabled).toBe(false)
+  })
+
+  it('keeps the sync interval a whole number of minutes within bounds', () => {
+    const base = { enabled: true, calendarUrl: 'https://dav.test', username: 'alice' }
+    expect(normalizeCalendarConfig({ ...base, syncIntervalMinutes: 5.9 }).syncIntervalMinutes).toBe(5)
+    expect(normalizeCalendarConfig({ ...base, syncIntervalMinutes: -3 }).syncIntervalMinutes).toBe(0)
+    expect(normalizeCalendarConfig({ ...base, syncIntervalMinutes: Number.NaN }).syncIntervalMinutes).toBe(0)
+    expect(normalizeCalendarConfig({ ...base, syncIntervalMinutes: 99999 }).syncIntervalMinutes).toBe(MAX_SYNC_INTERVAL_MINUTES)
   })
 
   it('is complete with an http(s) address and a user name', () => {
