@@ -48,6 +48,11 @@ function stamp(now: Date): string {
   return now.toISOString().replace(/[-:]/g, '').replace(/\.\d{3}/, '')
 }
 
+/** Colour of an event (RFC 7986 COLOR, a CSS colour name): green for income, red for expenses. */
+function eventColor(kind: TransactionKind): string {
+  return kind === 'income' ? 'green' : 'red'
+}
+
 /** The iCalendar text of a transaction. `now` only feeds DTSTAMP. */
 export function transactionToIcs(transaction: Transaction, now: Date = new Date()): string {
   const lines = [
@@ -62,6 +67,7 @@ export function transactionToIcs(transaction: Transaction, now: Date = new Date(
     `SUMMARY:${escapeText(transaction.description)}`,
     `CATEGORIES:${escapeText(transaction.category)}`,
     `DESCRIPTION:${transaction.kind === 'income' ? '+' : '-'}${transaction.amount}`,
+    `COLOR:${eventColor(transaction.kind)}`,
     'TRANSP:TRANSPARENT',
     `X-BUDGET-KIND:${transaction.kind}`,
     `X-BUDGET-AMOUNT:${transaction.amount}`,
@@ -190,6 +196,7 @@ export function recurrenceToIcs(recurrence: Recurrence, now: Date = new Date()):
     `SUMMARY:${escapeText(recurrence.description)}`,
     `CATEGORIES:${escapeText(recurrence.category)}`,
     `DESCRIPTION:${sign}${recurrence.amount}`,
+    `COLOR:${eventColor(recurrence.kind)}`,
     'TRANSP:TRANSPARENT',
     'X-BUDGET-SERIES:1',
     'END:VEVENT',

@@ -85,6 +85,11 @@ describe('ics', () => {
     expect(transactionToIcs(tx({ kind: 'expense', amount: 3 }))).toContain('DESCRIPTION:-3')
   })
 
+  it('colours events green for income and red for expenses', () => {
+    expect(transactionToIcs(tx({ kind: 'income' }))).toContain('COLOR:green')
+    expect(transactionToIcs(tx({ kind: 'expense' }))).toContain('COLOR:red')
+  })
+
   const event = (lines: string[]) => ['BEGIN:VCALENDAR', 'BEGIN:VEVENT', ...lines, 'END:VEVENT', 'END:VCALENDAR'].join('\r\n')
   const minimal = ['UID:t1@budget', 'X-BUDGET-KIND:expense', 'X-BUDGET-AMOUNT:5', 'DTSTART;VALUE=DATE:20261009']
 
