@@ -90,6 +90,40 @@ describe('isRecurrenceList', () => {
   })
 })
 
+describe('activeMonths', () => {
+  const edf = makeRecurrence({ startMonth: '2026-03', activeMonths: 10, occurrences: undefined })
+
+  it('is due in the first months of each yearly cycle only', () => {
+    const due = (m: string): boolean => appliesTo(edf, m)
+    expect(due('2026-02')).toBe(false)
+    expect(due('2026-03')).toBe(true)
+    expect(due('2026-12')).toBe(true)
+    expect(due('2027-01')).toBe(false)
+    expect(due('2027-02')).toBe(false)
+    expect(due('2027-03')).toBe(true)
+  })
+
+  it('counts only the due months toward the occurrences and the end', () => {
+    const limited = makeRecurrence({ startMonth: '2026-03', activeMonths: 10, occurrences: 12 })
+    expect(appliesTo(limited, '2027-04')).toBe(true)
+    expect(appliesTo(limited, '2027-05')).toBe(false)
+    expect(endMonth(limited)).toBe('2027-04')
+  })
+
+  it('ignores the cycle for day-based and custom-interval series', () => {
+    expect(appliesTo(makeRecurrence({ startMonth: '2026-03', activeMonths: 10, interval: 2 }), '2027-01')).toBe(true)
+    expect(occurrenceDates(makeRecurrence({ frequency: 'weekly', startMonth: '2026-03', activeMonths: 1 }), '2026-05').length).toBeGreaterThan(0)
+  })
+
+  it('is copied from the settings and validated', () => {
+    const transaction = { date: '2026-03-05', description: 'EDF', category: 'Logement', kind: 'expense', amount: 180 } as const
+    expect(recurrenceFromTransaction(transaction, { frequency: 'monthly', activeMonths: 10 })).toMatchObject({ activeMonths: 10 })
+    expect(isRecurrenceList([makeRecurrence({ activeMonths: 11 })])).toBe(true)
+    expect(isRecurrenceList([makeRecurrence({ activeMonths: 0 })])).toBe(false)
+    expect(isRecurrenceList([makeRecurrence({ activeMonths: 12 })])).toBe(false)
+  })
+})
+
 describe('sortRecurrences', () => {
   it('orders recurrences alphabetically by description', () => {
     const recurrences = [

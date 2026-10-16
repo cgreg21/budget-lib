@@ -6,7 +6,7 @@
  * event without them is not ours and is ignored.
  */
 import { isCategoryList } from './category.js';
-import { endDate, intervalOf, isDayBased, occurrenceDate } from './recurrence.js';
+import { cycleOf, endDate, intervalOf, isDayBased, occurrenceDate } from './recurrence.js';
 export const UID_SUFFIX = '@budget';
 const FOLD_AT = 70;
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
@@ -164,6 +164,11 @@ function recurrenceRule(recurrence) {
     if (!dayBased && recurrence.day > 28) {
         const days = Array.from({ length: recurrence.day - 27 }, (_, i) => 28 + i);
         parts.push(`BYMONTHDAY=${days.join(',')}`, 'BYSETPOS=-1');
+    }
+    const cycle = cycleOf(recurrence);
+    if (cycle !== undefined) {
+        const start = Number(recurrence.startMonth.slice(5, 7));
+        parts.push(`BYMONTH=${Array.from({ length: cycle }, (_, i) => ((start - 1 + i) % 12) + 1).sort((a, b) => a - b).join(',')}`);
     }
     const last = endDate(recurrence);
     if (recurrence.until !== undefined && last !== undefined) {

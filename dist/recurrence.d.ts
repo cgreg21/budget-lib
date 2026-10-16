@@ -37,6 +37,11 @@ export interface Recurrence {
     occurrences?: number;
     /** Last month the series applies to; combined with `occurrences`, the earliest end wins. */
     until?: MonthKey;
+    /**
+     * Monthly series paid only part of the year: it is due in the first `activeMonths` months of each
+     * 12-month cycle counted from `startMonth` (10 for a bill spread over ten months, then two months off).
+     */
+    activeMonths?: number;
 }
 /** A recurrence that has not been persisted yet (no id assigned). */
 export type RecurrenceInput = Omit<Recurrence, 'id'>;
@@ -46,7 +51,13 @@ export interface RecurrenceSettings {
     interval?: number;
     occurrences?: number;
     until?: MonthKey;
+    activeMonths?: number;
 }
+export declare const MIN_ACTIVE_MONTHS = 1;
+/** Fewer than twelve: a series due every month of the year has no cycle. */
+export declare const MAX_ACTIVE_MONTHS = 11;
+/** The months a monthly series is due in each 12-month cycle; `undefined` when it is due all year. */
+export declare function cycleOf(recurrence: Pick<Recurrence, 'frequency' | 'interval' | 'activeMonths'>): number | undefined;
 /** Days for a daily or weekly series, months otherwise, between two occurrences: `interval` counts periods of the frequency. */
 export declare function intervalOf(recurrence: Pick<Recurrence, 'frequency' | 'interval'>): number;
 export declare function isRecurrenceFrequency(value: unknown): value is RecurrenceFrequency;
