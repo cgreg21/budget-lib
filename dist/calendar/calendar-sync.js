@@ -1,0 +1,330 @@
+/*
+ * calendar-sync.ts — keeps the local transactions and the online calendar equal.
+ *
+ * `baseline` is what both sides held at the end of the previous run, per
+ * transaction. Comparing each side to it tells who changed what:
+ *   - only this device changed it        → upload
+ *   - only the calendar changed it       → download
+ *   - both changed it                    → the calendar wins
+ *   - one side deleted it, other did not → the deletion is propagated
+ * The application applies `upsertLocal` / `removeLocal` to its own storage and
+ * keeps `baseline` for the next run.
+ */
+import { recurrenceEventId } from './calendar-ics.js';
+import { CalendarError } from './caldav.js';
+import { DEFAULT_CATEGORIES, categoryIcon, findCategory } from '../domain/category.js';
+const baselineEntry = (located, hash) => ({
+    href: located.href, etag: located.etag, hash,
+});
+/** Runs an operation, counting it as skipped when the server refuses it with a `CalendarError` that `skippable` accepts. */
+function skipper(outcome, skippable = () => true) {
+    return async (operation) => {
+        try {
+            await operation();
+        }
+        catch (error) {
+            if (error instanceof CalendarError && skippable(error))
+                outcome.skipped += 1;
+            else
+                throw error;
+        }
+    };
+}
+/** Key prefix under which `baseline` remembers a trashed event; no transaction id looks like it. */
+export const TRASH_BASELINE_PREFIX = '@trash:';
+export function trashHash(t) {
+    return JSON.stringify([transactionHash(t), t.deletedAt]);
+}
+const eventIdOf = (event) => event.transaction?.id ?? event.trashed?.id;
+/**
+ * Brings the trash in line: a trashed transaction stays on the calendar as the same event, marked
+ * cancelled. Returns the remote list as it stands once done, plus calendar-side trash entries that
+ * wait for the transaction run to confirm the live copy is gone here too.
+ */
+async function syncTrash(client, local, trash, fetched, outcome, attempt) {
+    const next = outcome.baseline;
+    const view = [...fetched];
+    const pending = [];
+    const trashIds = new Set(trash.map((t) => t.id));
+    const liveIds = new Set(local.map((t) => t.id));
+    for (const item of trash) {
+        const key = TRASH_BASELINE_PREFIX + item.id;
+        const index = view.findIndex((event) => eventIdOf(event) === item.id);
+        const event = index >= 0 ? view[index] : undefined;
+        if (event?.trashed != null) {
+            next[key] = baselineEntry(event, trashHash(item));
+            delete next[item.id];
+            continue;
+        }
+        if (next[key] !== undefined) {
+            // It was in the trash on both sides: the calendar now holds it live (restored) or no more (emptied).
+            outcome.trashRemoved.push(item.id);
+            delete next[key];
+            continue;
+        }
+        await attempt(async () => {
+            const saved = await client.putTrashed(item, event?.etag, event?.href);
+            next[key] = baselineEntry(saved, trashHash(item));
+            delete next[item.id];
+            const updated = { href: saved.href, etag: saved.etag, transaction: null, trashed: item };
+            if (index >= 0)
+                view[index] = updated;
+            else
+                view.push(updated);
+            outcome.uploaded += 1;
+        });
+    }
+    for (const event of [...view]) {
+        const item = event.trashed;
+        if (item == null || trashIds.has(item.id))
+            continue;
+        const key = TRASH_BASELINE_PREFIX + item.id;
+        if (next[key] === undefined) {
+            if (liveIds.has(item.id))
+                pending.push(event);
+            else {
+                outcome.trashAdded.push(item);
+                next[key] = baselineEntry(event, trashHash(item));
+            }
+            continue;
+        }
+        // Known as trashed, gone from the local trash: restored here, or emptied here.
+        const restored = local.find((t) => t.id === item.id);
+        await attempt(async () => {
+            if (restored !== undefined) {
+                const saved = await client.put(restored, event.etag, event.href);
+                next[restored.id] = baselineEntry(saved, transactionHash(restored));
+                view[view.indexOf(event)] = { href: saved.href, etag: saved.etag, transaction: restored };
+                outcome.uploaded += 1;
+            }
+            else {
+                await client.remove(event.href, event.etag);
+                view.splice(view.indexOf(event), 1);
+                outcome.deleted += 1;
+            }
+            delete next[key];
+        });
+    }
+    return { remote: view, pending };
+}
+/** Key under which `baseline` remembers the category event; no transaction id looks like it. */
+export const CATEGORIES_BASELINE_KEY = '@categories';
+export function transactionHash(t) {
+    return JSON.stringify([t.id, t.date, t.description, t.category, t.kind, t.amount, t.recurrenceId ?? '']);
+}
+export function categoriesHash(categories) {
+    return JSON.stringify(categories.map((category) => [category.name, category.icon]));
+}
+/** `categories` followed by the names in `names` that it lacks, with the default icon of each. */
+export function ensureCategories(categories, names) {
+    const result = [...categories];
+    const known = new Set(result.map((category) => category.name));
+    for (const name of names) {
+        if (name === '' || known.has(name))
+            continue;
+        known.add(name);
+        result.push({ name, icon: categoryIcon(DEFAULT_CATEGORIES, name) });
+    }
+    return result;
+}
+/** The remote list, then the local categories it lacks: the calendar wins on order and icons. */
+export function mergeCategories(remote, local) {
+    return ensureCategories(remote, local.map((category) => category.name)).map((category) => (findCategory(remote, category.name) ?? findCategory(local, category.name) ?? category));
+}
+/**
+ * Pure decision for the category list, on the same three-way rule as the
+ * transactions; `used` are the category names the transactions refer to, so a
+ * category is never missing from the list. Both sides changed → the lists are merged.
+ */
+export function planCategories(base, local, remote, used) {
+    let list = [...local];
+    if (remote !== undefined) {
+        const lHash = categoriesHash(local);
+        const rHash = categoriesHash(remote);
+        if (lHash !== rHash) {
+            const localChanged = base === undefined || base.hash !== lHash;
+            const remoteChanged = base === undefined || base.hash !== rHash;
+            if (remoteChanged && localChanged)
+                list = mergeCategories(remote, local);
+            else if (remoteChanged)
+                list = [...remote];
+        }
+    }
+    list = ensureCategories(list, used);
+    const upload = list.length > 0 && (remote === undefined || categoriesHash(list) !== categoriesHash(remote));
+    return { list, upload };
+}
+/** Pure decision: which operations bring both sides in line. */
+export function planSync(baseline, local, remote) {
+    const plan = { upload: [], download: [], deleteRemote: [], deleteLocal: [], settled: {}, dropped: [] };
+    const locals = new Map(local.map((t) => [t.id, t]));
+    const remotes = new Map();
+    for (const event of remote) {
+        if (event.transaction !== null)
+            remotes.set(event.transaction.id, { transaction: event.transaction, href: event.href, etag: event.etag });
+    }
+    for (const id of new Set([...locals.keys(), ...remotes.keys(), ...Object.keys(baseline)])) {
+        if (id.startsWith('@'))
+            continue;
+        const l = locals.get(id);
+        const r = remotes.get(id);
+        const base = baseline[id];
+        if (l !== undefined && r !== undefined) {
+            const lHash = transactionHash(l);
+            const rHash = transactionHash(r.transaction);
+            if (lHash === rHash) {
+                plan.settled[id] = baselineEntry(r, lHash);
+                continue;
+            }
+            const localChanged = base === undefined || base.hash !== lHash;
+            const remoteChanged = base === undefined || base.hash !== rHash;
+            if (localChanged && !remoteChanged)
+                plan.upload.push({ transaction: l, href: r.href, etag: r.etag });
+            else
+                plan.download.push({ transaction: r.transaction, href: r.href, etag: r.etag });
+        }
+        else if (l !== undefined) {
+            if (base === undefined || transactionHash(l) !== base.hash)
+                plan.upload.push({ transaction: l });
+            else
+                plan.deleteLocal.push(id);
+        }
+        else if (r !== undefined) {
+            if (base === undefined || transactionHash(r.transaction) !== base.hash)
+                plan.download.push({ transaction: r.transaction, href: r.href, etag: r.etag });
+            else
+                plan.deleteRemote.push({ id, href: r.href, etag: r.etag });
+        }
+        else {
+            plan.dropped.push(id);
+        }
+    }
+    return plan;
+}
+/**
+ * One synchronisation run. Network failures propagate; per-event conflicts are skipped.
+ * Pass the local `categories` to synchronise the category list too: the result is
+ * in `outcome.categories` (null when the local list is already right).
+ */
+export async function syncCalendar(client, local, baseline, categories, recurrences, trash) {
+    const fetched = await client.list();
+    const next = { ...baseline };
+    const outcome = {
+        upsertLocal: [], removeLocal: [], baseline: next, uploaded: 0, downloaded: 0, deleted: 0, skipped: 0,
+        categories: null, trashAdded: [], trashRemoved: [],
+    };
+    const attempt = skipper(outcome, (error) => error.kind === 'conflict' || error.kind === 'not-found');
+    let remote = fetched;
+    let pendingTrash = [];
+    if (trash !== undefined)
+        ({ remote, pending: pendingTrash } = await syncTrash(client, local, trash, fetched, outcome, attempt));
+    const plan = planSync(next, local, remote);
+    Object.assign(next, plan.settled);
+    for (const id of plan.dropped)
+        delete next[id];
+    // A trashed event of the calendar whose live copy is deleted here too is a new trash entry.
+    for (const event of pendingTrash) {
+        const item = event.trashed;
+        if (!plan.deleteLocal.includes(item.id))
+            continue;
+        outcome.trashAdded.push(item);
+        next[TRASH_BASELINE_PREFIX + item.id] = baselineEntry(event, trashHash(item));
+    }
+    for (const item of plan.upload) {
+        await attempt(async () => {
+            const saved = await client.put(item.transaction, item.etag, item.href);
+            next[item.transaction.id] = baselineEntry(saved, transactionHash(item.transaction));
+            outcome.uploaded += 1;
+        });
+    }
+    for (const item of plan.download) {
+        outcome.upsertLocal.push(item.transaction);
+        next[item.transaction.id] = baselineEntry(item, transactionHash(item.transaction));
+        outcome.downloaded += 1;
+    }
+    for (const item of plan.deleteRemote) {
+        await attempt(async () => {
+            await client.remove(item.href, item.etag);
+            delete next[item.id];
+            outcome.deleted += 1;
+        });
+    }
+    for (const id of plan.deleteLocal) {
+        outcome.removeLocal.push(id);
+        delete next[id];
+        outcome.deleted += 1;
+    }
+    if (categories !== undefined)
+        await syncCategoryList(client, categories, remote, outcome, local);
+    if (recurrences !== undefined)
+        await syncRecurrenceEvents(client, recurrences, remote, outcome);
+    return outcome;
+}
+/** Key under which `baseline` remembers the recurring event of a series. */
+export const RECURRENCE_BASELINE_PREFIX = '@recurrence:';
+export function recurrenceHash(r) {
+    const parts = [r.id, r.description, r.category, r.kind, r.amount, r.day, r.frequency, r.startMonth, r.occurrences ?? ''];
+    // Optional fields are appended only when used, so the hash of a series without them never changes.
+    if (r.interval !== undefined || r.until !== undefined || r.activeMonths !== undefined || r.installments !== undefined) {
+        parts.push(r.interval ?? '', r.until ?? '');
+    }
+    if (r.activeMonths !== undefined || r.installments !== undefined)
+        parts.push(r.activeMonths ?? '');
+    if (r.installments !== undefined)
+        parts.push(r.installments);
+    return JSON.stringify(parts);
+}
+/** Publishes each series as a recurring event and removes the ones of deleted series; one way, local to calendar. */
+async function syncRecurrenceEvents(client, recurrences, remote, outcome) {
+    const next = outcome.baseline;
+    const attempt = skipper(outcome);
+    const live = new Set();
+    for (const recurrence of recurrences) {
+        const key = RECURRENCE_BASELINE_PREFIX + recurrence.id;
+        live.add(key);
+        const hash = recurrenceHash(recurrence);
+        const base = next[key];
+        if (base?.hash === hash)
+            continue;
+        const suffix = `/${encodeURIComponent(recurrenceEventId(recurrence.id))}.ics`;
+        const existing = base ?? remote.find((event) => event.href.endsWith(suffix));
+        await attempt(async () => {
+            const saved = await client.putRecurrence(recurrence, existing?.etag, existing?.href);
+            next[key] = baselineEntry(saved, hash);
+            outcome.uploaded += 1;
+        });
+    }
+    for (const key of Object.keys(next)) {
+        if (!key.startsWith(RECURRENCE_BASELINE_PREFIX) || live.has(key))
+            continue;
+        await attempt(async () => {
+            await client.remove(next[key].href, next[key].etag);
+            delete next[key];
+            outcome.deleted += 1;
+        });
+    }
+}
+async function syncCategoryList(client, categories, remote, outcome, local) {
+    const event = remote.find((candidate) => candidate.categories != null);
+    const removed = new Set(outcome.removeLocal);
+    const finalTransactions = new Map(local.filter((t) => !removed.has(t.id)).map((t) => [t.id, t]));
+    for (const t of outcome.upsertLocal)
+        finalTransactions.set(t.id, t);
+    const used = [...finalTransactions.values()].map((t) => t.category);
+    const { list, upload } = planCategories(outcome.baseline[CATEGORIES_BASELINE_KEY], categories, event?.categories ?? undefined, used);
+    if (categoriesHash(list) !== categoriesHash(categories))
+        outcome.categories = list;
+    const hash = categoriesHash(list);
+    if (!upload) {
+        if (event !== undefined)
+            outcome.baseline[CATEGORIES_BASELINE_KEY] = baselineEntry(event, hash);
+        return;
+    }
+    // A read-only or concurrently changed calendar must not undo the transactions just synchronised.
+    await skipper(outcome)(async () => {
+        const saved = await client.putCategories(list, event?.etag, event?.href);
+        outcome.baseline[CATEGORIES_BASELINE_KEY] = baselineEntry(saved, hash);
+        outcome.uploaded += 1;
+    });
+}
+//# sourceMappingURL=calendar-sync.js.map

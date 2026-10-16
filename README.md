@@ -30,6 +30,12 @@ par exemple, que NativeScript refuse).
 
 Tout est exporté depuis le point d'entrée : `import { filterTransactions, mergeMonth } from 'budget-lib'`.
 
+Les sources sont rangées par thème dans `src/`, et les tests reproduisent la même arborescence dans `test/` :
+`domain/` (transaction, month, recurrence, category, category-icons), `display/` (balance, general-settings, pie-chart),
+`calendar/` (calendar-ics, caldav, calendar-sync), `bank/` (bank, bank-state, enable-banking),
+`data/` (backup, config-archive, csv) et `utils/` (bytes). `src/index.ts` ré-exporte le tout : ces dossiers
+sont internes, les applications n'importent que `budget-lib`.
+
 Le format des fichiers (`categories.json`, `thresholds.json`, `recurrences.json`,
 `months/YYYY-MM.json`) est celui des deux applications : elles peuvent partager le même
 dossier distant.
