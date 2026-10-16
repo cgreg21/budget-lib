@@ -382,3 +382,41 @@ describe('bounds', () => {
     expect(MAX_OCCURRENCES).toBeGreaterThan(MIN_OCCURRENCES)
   })
 })
+
+describe('installments', () => {
+  const tax = {
+    id: 'tax', description: 'Tax', category: 'Taxes', kind: 'expense' as const, amount: 100, day: 15,
+    frequency: 'yearly' as const, startMonth: '2026-02',
+    installments: [{ offset: 3, day: 15, amount: 150 }, { offset: 7, day: 1, amount: 200 }],
+  }
+
+  it('falls on every date of the period with its own amount', async () => {
+    const { occurrencesIn } = await import('../src/recurrence.js')
+    expect(occurrencesIn(tax, '2026-02')).toEqual([{ date: '2026-02-15', amount: 100 }])
+    expect(occurrencesIn(tax, '2026-05')).toEqual([{ date: '2026-05-15', amount: 150 }])
+    expect(occurrencesIn(tax, '2026-09')).toEqual([{ date: '2026-09-01', amount: 200 }])
+    expect(occurrencesIn(tax, '2027-05')).toEqual([{ date: '2027-05-15', amount: 150 }])
+    expect(occurrencesIn(tax, '2026-03')).toEqual([])
+  })
+
+  it('counts periods and stops at the last month', async () => {
+    const { endMonth, occurrencesIn } = await import('../src/recurrence.js')
+    const limited = { ...tax, occurrences: 1 }
+    expect(endMonth(limited)).toBe('2026-09')
+    expect(occurrencesIn(limited, '2027-02')).toEqual([])
+    expect(occurrencesIn({ ...tax, until: '2026-06' }, '2026-09')).toEqual([])
+  })
+
+  it('creates each missing occurrence once, with the right amount', async () => {
+    const { missingOccurrences } = await import('../src/recurrence.js')
+    const [first] = missingOccurrences([tax], '2026-05', [])
+    expect(first).toMatchObject({ date: '2026-05-15', amount: 150, recurrenceId: 'tax' })
+    expect(missingOccurrences([tax], '2026-05', [{ ...first, id: 't1' }])).toEqual([])
+  })
+
+  it('is validated with the list of recurrences', () => {
+    expect(isRecurrenceList([tax])).toBe(true)
+    expect(isRecurrenceList([{ ...tax, installments: [{ offset: 12, day: 1, amount: 5 }] }])).toBe(false)
+    expect(isRecurrenceList([{ ...tax, frequency: 'weekly' }])).toBe(false)
+  })
+})

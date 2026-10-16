@@ -63,6 +63,23 @@ export const MIN_INTERVAL = 1
 /** A custom rhythm of up to five years between two occurrences. */
 export const MAX_INTERVAL = 60
 
+/** An extra date of each period of a series, with its own amount (a tax paid in three instalments). */
+export interface Installment {
+  /** Months after the first occurrence of the period; 0 is the same month, on another day. */
+  offset: number
+  day: number
+  /** Always positive; the sign is derived from the series' `kind`. */
+  amount: number
+}
+
+/** A date a series falls on, with the amount due that day. */
+export interface Occurrence {
+  date: string
+  amount: number
+}
+
+export const MAX_INSTALLMENTS = 12
+
 export interface Recurrence {
   id: string
   description: string
@@ -86,6 +103,8 @@ export interface Recurrence {
    * 12-month cycle counted from `startMonth` (10 for a bill spread over ten months, then two months off).
    */
   activeMonths?: number
+  /** Extra dates in each period, on top of the main one; only for monthly-based series due all year. */
+  installments?: Installment[]
 }
 
 /** A recurrence that has not been persisted yet (no id assigned). */
@@ -98,6 +117,7 @@ export interface RecurrenceSettings {
   occurrences?: number
   until?: MonthKey
   activeMonths?: number
+  installments?: Installment[]
 }
 
 export const MIN_ACTIVE_MONTHS = 1
@@ -111,6 +131,16 @@ export function cycleOf(recurrence: Pick<Recurrence, 'frequency' | 'interval' | 
     return undefined
   }
   return activeMonths
+}
+
+/** Whether a series can hold installments: monthly-based and due all year. */
+export function canHaveInstallments(recurrence: Pick<Recurrence, 'frequency' | 'interval' | 'activeMonths'>): boolean {
+  return !isDayBased(recurrence.frequency) && (recurrence.activeMonths === undefined || recurrence.activeMonths >= 12)
+}
+
+/** The latest month offset an installment can have: it must stay inside its period. */
+export function maxInstallmentOffset(recurrence: Pick<Recurrence, 'frequency' | 'interval'>): number {
+  return isDayBased(recurrence.frequency) ? 0 : intervalOf(recurrence) - 1
 }
 
 /** Days for a daily or weekly series, months otherwise, between two occurrences: `interval` counts periods of the frequency. */
@@ -138,15 +168,27 @@ export function appliesTo(recurrence: Recurrence, month: MonthKey): boolean {
   return occurrenceDates(recurrence, month).length > 0
 }
 
-/** Every date the recurrence falls on in that month: one for a monthly-based series, several for a daily or weekly one. */
+/** Every date the recurrence falls on in that month: one for a plain monthly-based series, several for a daily or weekly one or one with installments. */
 export function occurrenceDates(recurrence: Recurrence, month: MonthKey): string[] {
-  if (isDayBased(recurrence.frequency)) return dayOccurrenceDates(recurrence, month)
+  return occurrencesIn(recurrence, month).map((occurrence) => occurrence.date)
+}
 
-  const rank = occurrenceRank(recurrence, month)
-  if (rank === null) return []
+/** The dates the recurrence falls on in that month, with the amount due each time. */
+export function occurrencesIn(recurrence: Recurrence, month: MonthKey): Occurrence[] {
+  if (isDayBased(recurrence.frequency)) {
+    return dayOccurrenceDates(recurrence, month).map((date) => ({ date, amount: recurrence.amount }))
+  }
   if (recurrence.until !== undefined && monthsBetween(month, recurrence.until) < 0) return []
-  if (recurrence.occurrences !== undefined && rank >= recurrence.occurrences) return []
-  return [occurrenceDate(recurrence, month)]
+
+  const parts = [{ offset: 0, day: recurrence.day, amount: recurrence.amount }, ...(recurrence.installments ?? [])]
+  const found: Occurrence[] = []
+  for (const part of parts) {
+    const rank = occurrenceRank(recurrence, shiftMonth(month, -part.offset))
+    if (rank === null) continue
+    if (recurrence.occurrences !== undefined && rank >= recurrence.occurrences) continue
+    found.push({ date: occurrenceDate({ ...recurrence, day: part.day }, month), amount: part.amount })
+  }
+  return found.sort((a, b) => a.date.localeCompare(b.date))
 }
 
 const MS_PER_DAY = 86_400_000
@@ -201,7 +243,7 @@ export function endMonth(recurrence: Recurrence): MonthKey | undefined {
     return last === undefined ? undefined : monthKeyOf(isoDateOfDayNumber(last))
   }
   const cycle = cycleOf(recurrence)
-  const byCount =
+  const periodEnd =
     recurrence.occurrences === undefined
       ? undefined
       : cycle === undefined
@@ -210,6 +252,8 @@ export function endMonth(recurrence: Recurrence): MonthKey | undefined {
             recurrence.startMonth,
             Math.floor((recurrence.occurrences - 1) / cycle) * 12 + ((recurrence.occurrences - 1) % cycle),
           )
+  const spread = Math.max(0, ...(recurrence.installments ?? []).map((installment) => installment.offset))
+  const byCount = periodEnd === undefined || spread === 0 ? periodEnd : shiftMonth(periodEnd, spread)
   if (recurrence.until === undefined) return byCount
   if (byCount === undefined) return recurrence.until
   return monthsBetween(byCount, recurrence.until) < 0 ? recurrence.until : byCount
@@ -239,13 +283,14 @@ export function occurrenceOf(
   recurrence: Recurrence,
   month: MonthKey,
   date: string = occurrenceDate(recurrence, month),
+  amount: number = recurrence.amount,
 ): TransactionInput {
   return {
     date,
     description: recurrence.description,
     category: recurrence.category,
     kind: recurrence.kind,
-    amount: recurrence.amount,
+    amount,
     recurrenceId: recurrence.id,
   }
 }
@@ -271,6 +316,7 @@ export function recurrenceFromTransaction(
     ...(settings.interval === undefined ? {} : { interval: settings.interval }),
     ...(settings.until === undefined ? {} : { until: settings.until }),
     ...(settings.activeMonths === undefined ? {} : { activeMonths: settings.activeMonths }),
+    ...(settings.installments === undefined || settings.installments.length === 0 ? {} : { installments: settings.installments.map((installment) => ({ ...installment })) }),
   }
 }
 
@@ -295,21 +341,21 @@ export function missingOccurrences(
   const missing: TransactionInput[] = []
 
   for (const recurrence of recurrences) {
-    const dates = occurrenceDates(recurrence, month)
-    if (dates.length === 0) continue
+    const due = occurrencesIn(recurrence, month)
+    if (due.length === 0) continue
 
     const stamped = transactions.filter((transaction) => transaction.recurrenceId === recurrence.id)
-    if (!isDayBased(recurrence.frequency)) {
-      if (stamped.length === 0) missing.push(occurrenceOf(recurrence, month, dates[0]))
+    if (!isDayBased(recurrence.frequency) && due.length === 1) {
+      if (stamped.length === 0) missing.push(occurrenceOf(recurrence, month, due[0].date, due[0].amount))
       continue
     }
 
     const taken = new Set(stamped.map((transaction) => transaction.date))
-    let room = dates.length - stamped.length
-    for (const date of dates) {
+    let room = due.length - stamped.length
+    for (const { date, amount } of due) {
       if (room <= 0) break
       if (taken.has(date)) continue
-      missing.push(occurrenceOf(recurrence, month, date))
+      missing.push(occurrenceOf(recurrence, month, date, amount))
       room--
     }
   }
@@ -348,6 +394,24 @@ function isRecurrence(value: unknown): value is Recurrence {
       (typeof candidate.activeMonths === 'number' &&
         Number.isInteger(candidate.activeMonths) &&
         candidate.activeMonths >= MIN_ACTIVE_MONTHS &&
-        candidate.activeMonths <= MAX_ACTIVE_MONTHS))
+        candidate.activeMonths <= MAX_ACTIVE_MONTHS)) &&
+    (candidate.installments === undefined || isInstallmentList(candidate.installments, candidate as Recurrence))
+  )
+}
+
+function isInstallmentList(value: unknown, recurrence: Recurrence): value is Installment[] {
+  return (
+    Array.isArray(value) &&
+    value.length <= MAX_INSTALLMENTS &&
+    canHaveInstallments(recurrence) &&
+    value.every((item) => {
+      if (typeof item !== 'object' || item === null) return false
+      const { offset, day, amount } = item as Partial<Installment>
+      return (
+        Number.isInteger(offset) && (offset as number) >= 0 && (offset as number) <= maxInstallmentOffset(recurrence) &&
+        Number.isInteger(day) && (day as number) >= FIRST_DAY && (day as number) <= LAST_DAY &&
+        typeof amount === 'number' && Number.isFinite(amount)
+      )
+    })
   )
 }

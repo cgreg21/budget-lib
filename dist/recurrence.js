@@ -42,6 +42,7 @@ export const MAX_OCCURRENCES = 600;
 export const MIN_INTERVAL = 1;
 /** A custom rhythm of up to five years between two occurrences. */
 export const MAX_INTERVAL = 60;
+export const MAX_INSTALLMENTS = 12;
 export const MIN_ACTIVE_MONTHS = 1;
 /** Fewer than twelve: a series due every month of the year has no cycle. */
 export const MAX_ACTIVE_MONTHS = 11;
@@ -52,6 +53,14 @@ export function cycleOf(recurrence) {
         return undefined;
     }
     return activeMonths;
+}
+/** Whether a series can hold installments: monthly-based and due all year. */
+export function canHaveInstallments(recurrence) {
+    return !isDayBased(recurrence.frequency) && (recurrence.activeMonths === undefined || recurrence.activeMonths >= 12);
+}
+/** The latest month offset an installment can have: it must stay inside its period. */
+export function maxInstallmentOffset(recurrence) {
+    return isDayBased(recurrence.frequency) ? 0 : intervalOf(recurrence) - 1;
 }
 /** Days for a daily or weekly series, months otherwise, between two occurrences: `interval` counts periods of the frequency. */
 export function intervalOf(recurrence) {
@@ -73,18 +82,28 @@ export function sortRecurrences(recurrences) {
 export function appliesTo(recurrence, month) {
     return occurrenceDates(recurrence, month).length > 0;
 }
-/** Every date the recurrence falls on in that month: one for a monthly-based series, several for a daily or weekly one. */
+/** Every date the recurrence falls on in that month: one for a plain monthly-based series, several for a daily or weekly one or one with installments. */
 export function occurrenceDates(recurrence, month) {
-    if (isDayBased(recurrence.frequency))
-        return dayOccurrenceDates(recurrence, month);
-    const rank = occurrenceRank(recurrence, month);
-    if (rank === null)
-        return [];
+    return occurrencesIn(recurrence, month).map((occurrence) => occurrence.date);
+}
+/** The dates the recurrence falls on in that month, with the amount due each time. */
+export function occurrencesIn(recurrence, month) {
+    if (isDayBased(recurrence.frequency)) {
+        return dayOccurrenceDates(recurrence, month).map((date) => ({ date, amount: recurrence.amount }));
+    }
     if (recurrence.until !== undefined && monthsBetween(month, recurrence.until) < 0)
         return [];
-    if (recurrence.occurrences !== undefined && rank >= recurrence.occurrences)
-        return [];
-    return [occurrenceDate(recurrence, month)];
+    const parts = [{ offset: 0, day: recurrence.day, amount: recurrence.amount }, ...(recurrence.installments ?? [])];
+    const found = [];
+    for (const part of parts) {
+        const rank = occurrenceRank(recurrence, shiftMonth(month, -part.offset));
+        if (rank === null)
+            continue;
+        if (recurrence.occurrences !== undefined && rank >= recurrence.occurrences)
+            continue;
+        found.push({ date: occurrenceDate({ ...recurrence, day: part.day }, month), amount: part.amount });
+    }
+    return found.sort((a, b) => a.date.localeCompare(b.date));
 }
 const MS_PER_DAY = 86_400_000;
 function dayNumber(isoDate) {
@@ -132,11 +151,13 @@ export function endMonth(recurrence) {
         return last === undefined ? undefined : monthKeyOf(isoDateOfDayNumber(last));
     }
     const cycle = cycleOf(recurrence);
-    const byCount = recurrence.occurrences === undefined
+    const periodEnd = recurrence.occurrences === undefined
         ? undefined
         : cycle === undefined
             ? shiftMonth(recurrence.startMonth, (recurrence.occurrences - 1) * intervalOf(recurrence))
             : shiftMonth(recurrence.startMonth, Math.floor((recurrence.occurrences - 1) / cycle) * 12 + ((recurrence.occurrences - 1) % cycle));
+    const spread = Math.max(0, ...(recurrence.installments ?? []).map((installment) => installment.offset));
+    const byCount = periodEnd === undefined || spread === 0 ? periodEnd : shiftMonth(periodEnd, spread);
     if (recurrence.until === undefined)
         return byCount;
     if (byCount === undefined)
@@ -162,13 +183,13 @@ export function occurrenceDate(recurrence, month) {
     const day = Math.min(recurrence.day, daysInMonth(month));
     return `${month}-${String(day).padStart(2, '0')}`;
 }
-export function occurrenceOf(recurrence, month, date = occurrenceDate(recurrence, month)) {
+export function occurrenceOf(recurrence, month, date = occurrenceDate(recurrence, month), amount = recurrence.amount) {
     return {
         date,
         description: recurrence.description,
         category: recurrence.category,
         kind: recurrence.kind,
-        amount: recurrence.amount,
+        amount,
         recurrenceId: recurrence.id,
     };
 }
@@ -190,6 +211,7 @@ export function recurrenceFromTransaction(transaction, settings) {
         ...(settings.interval === undefined ? {} : { interval: settings.interval }),
         ...(settings.until === undefined ? {} : { until: settings.until }),
         ...(settings.activeMonths === undefined ? {} : { activeMonths: settings.activeMonths }),
+        ...(settings.installments === undefined || settings.installments.length === 0 ? {} : { installments: settings.installments.map((installment) => ({ ...installment })) }),
     };
 }
 export function recurrencesFor(recurrences, month) {
@@ -204,23 +226,23 @@ export function recurrencesFor(recurrences, month) {
 export function missingOccurrences(recurrences, month, transactions) {
     const missing = [];
     for (const recurrence of recurrences) {
-        const dates = occurrenceDates(recurrence, month);
-        if (dates.length === 0)
+        const due = occurrencesIn(recurrence, month);
+        if (due.length === 0)
             continue;
         const stamped = transactions.filter((transaction) => transaction.recurrenceId === recurrence.id);
-        if (!isDayBased(recurrence.frequency)) {
+        if (!isDayBased(recurrence.frequency) && due.length === 1) {
             if (stamped.length === 0)
-                missing.push(occurrenceOf(recurrence, month, dates[0]));
+                missing.push(occurrenceOf(recurrence, month, due[0].date, due[0].amount));
             continue;
         }
         const taken = new Set(stamped.map((transaction) => transaction.date));
-        let room = dates.length - stamped.length;
-        for (const date of dates) {
+        let room = due.length - stamped.length;
+        for (const { date, amount } of due) {
             if (room <= 0)
                 break;
             if (taken.has(date))
                 continue;
-            missing.push(occurrenceOf(recurrence, month, date));
+            missing.push(occurrenceOf(recurrence, month, date, amount));
             room--;
         }
     }
@@ -256,6 +278,20 @@ function isRecurrence(value) {
             (typeof candidate.activeMonths === 'number' &&
                 Number.isInteger(candidate.activeMonths) &&
                 candidate.activeMonths >= MIN_ACTIVE_MONTHS &&
-                candidate.activeMonths <= MAX_ACTIVE_MONTHS)));
+                candidate.activeMonths <= MAX_ACTIVE_MONTHS)) &&
+        (candidate.installments === undefined || isInstallmentList(candidate.installments, candidate)));
+}
+function isInstallmentList(value, recurrence) {
+    return (Array.isArray(value) &&
+        value.length <= MAX_INSTALLMENTS &&
+        canHaveInstallments(recurrence) &&
+        value.every((item) => {
+            if (typeof item !== 'object' || item === null)
+                return false;
+            const { offset, day, amount } = item;
+            return (Number.isInteger(offset) && offset >= 0 && offset <= maxInstallmentOffset(recurrence) &&
+                Number.isInteger(day) && day >= FIRST_DAY && day <= LAST_DAY &&
+                typeof amount === 'number' && Number.isFinite(amount));
+        }));
 }
 //# sourceMappingURL=recurrence.js.map

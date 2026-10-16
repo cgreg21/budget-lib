@@ -19,6 +19,20 @@ export declare const MAX_OCCURRENCES = 600;
 export declare const MIN_INTERVAL = 1;
 /** A custom rhythm of up to five years between two occurrences. */
 export declare const MAX_INTERVAL = 60;
+/** An extra date of each period of a series, with its own amount (a tax paid in three instalments). */
+export interface Installment {
+    /** Months after the first occurrence of the period; 0 is the same month, on another day. */
+    offset: number;
+    day: number;
+    /** Always positive; the sign is derived from the series' `kind`. */
+    amount: number;
+}
+/** A date a series falls on, with the amount due that day. */
+export interface Occurrence {
+    date: string;
+    amount: number;
+}
+export declare const MAX_INSTALLMENTS = 12;
 export interface Recurrence {
     id: string;
     description: string;
@@ -42,6 +56,8 @@ export interface Recurrence {
      * 12-month cycle counted from `startMonth` (10 for a bill spread over ten months, then two months off).
      */
     activeMonths?: number;
+    /** Extra dates in each period, on top of the main one; only for monthly-based series due all year. */
+    installments?: Installment[];
 }
 /** A recurrence that has not been persisted yet (no id assigned). */
 export type RecurrenceInput = Omit<Recurrence, 'id'>;
@@ -52,12 +68,17 @@ export interface RecurrenceSettings {
     occurrences?: number;
     until?: MonthKey;
     activeMonths?: number;
+    installments?: Installment[];
 }
 export declare const MIN_ACTIVE_MONTHS = 1;
 /** Fewer than twelve: a series due every month of the year has no cycle. */
 export declare const MAX_ACTIVE_MONTHS = 11;
 /** The months a monthly series is due in each 12-month cycle; `undefined` when it is due all year. */
 export declare function cycleOf(recurrence: Pick<Recurrence, 'frequency' | 'interval' | 'activeMonths'>): number | undefined;
+/** Whether a series can hold installments: monthly-based and due all year. */
+export declare function canHaveInstallments(recurrence: Pick<Recurrence, 'frequency' | 'interval' | 'activeMonths'>): boolean;
+/** The latest month offset an installment can have: it must stay inside its period. */
+export declare function maxInstallmentOffset(recurrence: Pick<Recurrence, 'frequency' | 'interval'>): number;
 /** Days for a daily or weekly series, months otherwise, between two occurrences: `interval` counts periods of the frequency. */
 export declare function intervalOf(recurrence: Pick<Recurrence, 'frequency' | 'interval'>): number;
 export declare function isRecurrenceFrequency(value: unknown): value is RecurrenceFrequency;
@@ -66,15 +87,17 @@ export declare function isRecurrenceList(value: unknown): value is Recurrence[];
 export declare function sortRecurrences(recurrences: readonly Recurrence[]): Recurrence[];
 /** True when the recurrence produces an occurrence in that month. */
 export declare function appliesTo(recurrence: Recurrence, month: MonthKey): boolean;
-/** Every date the recurrence falls on in that month: one for a monthly-based series, several for a daily or weekly one. */
+/** Every date the recurrence falls on in that month: one for a plain monthly-based series, several for a daily or weekly one or one with installments. */
 export declare function occurrenceDates(recurrence: Recurrence, month: MonthKey): string[];
+/** The dates the recurrence falls on in that month, with the amount due each time. */
+export declare function occurrencesIn(recurrence: Recurrence, month: MonthKey): Occurrence[];
 /** The date of the last occurrence of a limited series; `undefined` when it never ends. */
 export declare function endDate(recurrence: Recurrence): string | undefined;
 /** The last month of a limited series; `undefined` when it never ends. */
 export declare function endMonth(recurrence: Recurrence): MonthKey | undefined;
 /** The occurrence's date, clamped to the length of the month. */
 export declare function occurrenceDate(recurrence: Recurrence, month: MonthKey): string;
-export declare function occurrenceOf(recurrence: Recurrence, month: MonthKey, date?: string): TransactionInput;
+export declare function occurrenceOf(recurrence: Recurrence, month: MonthKey, date?: string, amount?: number): TransactionInput;
 /**
  * The series a transaction stands for when it is made recurring: it repeats on
  * its own day, from its own month on. Everything else is copied over, so the

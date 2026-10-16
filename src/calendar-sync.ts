@@ -318,7 +318,7 @@ export async function syncCalendar(
 export const RECURRENCE_BASELINE_PREFIX = '@recurrence:'
 
 export function recurrenceHash(r: Recurrence): string {
-  return JSON.stringify([r.id, r.description, r.category, r.kind, r.amount, r.day, r.frequency, r.startMonth, r.occurrences ?? '', ...(r.interval !== undefined || r.until !== undefined || r.activeMonths !== undefined ? [r.interval ?? '', r.until ?? ''] : []), ...(r.activeMonths !== undefined ? [r.activeMonths] : [])])
+  return JSON.stringify([r.id, r.description, r.category, r.kind, r.amount, r.day, r.frequency, r.startMonth, r.occurrences ?? '', ...(r.interval !== undefined || r.until !== undefined || r.activeMonths !== undefined || r.installments !== undefined ? [r.interval ?? '', r.until ?? ''] : []), ...(r.activeMonths !== undefined || r.installments !== undefined ? [r.activeMonths ?? ''] : []), ...(r.installments !== undefined ? [r.installments] : [])])
 }
 
 /** Publishes each series as a recurring event and removes the ones of deleted series; one way, local to calendar. */

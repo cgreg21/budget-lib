@@ -218,7 +218,7 @@ export function recurrenceToIcs(recurrence: Recurrence, now: Date = new Date()):
     `RRULE:${recurrenceRule(recurrence)}`,
     `SUMMARY:${escapeText(recurrence.description)}`,
     `CATEGORIES:${escapeText(recurrence.category)}`,
-    `DESCRIPTION:${sign}${recurrence.amount}`,
+    `DESCRIPTION:${escapeText([`${sign}${recurrence.amount}`, ...(recurrence.installments ?? []).map((i) => `${sign}${i.amount} (+${i.offset}m, d${i.day})`)].join('; '))}`,
     `COLOR:${eventColor(recurrence.kind)}`,
     'TRANSP:TRANSPARENT',
     'X-BUDGET-SERIES:1',
