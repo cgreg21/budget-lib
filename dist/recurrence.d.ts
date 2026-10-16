@@ -1,9 +1,15 @@
 import { type MonthKey } from './month.js';
 import type { Transaction, TransactionInput, TransactionKind } from './transaction.js';
-export type RecurrenceFrequency = 'monthly' | 'bimonthly' | 'quarterly' | 'semiannual' | 'yearly';
+export type DayFrequency = 'daily' | 'weekly';
+export type MonthlyFrequency = 'monthly' | 'bimonthly' | 'quarterly' | 'semiannual' | 'yearly';
+export type RecurrenceFrequency = DayFrequency | MonthlyFrequency;
 export declare const RECURRENCE_FREQUENCIES: readonly RecurrenceFrequency[];
-/** Months separating two occurrences. */
-export declare const OCCURRENCE_INTERVAL: Record<RecurrenceFrequency, number>;
+/** Months separating two occurrences of a monthly-based frequency. */
+export declare const OCCURRENCE_INTERVAL: Record<MonthlyFrequency, number>;
+/** Days separating two occurrences of a daily or weekly frequency. */
+export declare const DAY_STEP: Record<DayFrequency, number>;
+/** Daily and weekly series can hold several occurrences in one month. */
+export declare function isDayBased(frequency: RecurrenceFrequency): frequency is DayFrequency;
 export declare const FIRST_DAY = 1;
 /** Longest month; shorter months clamp the day down (a 31 becomes the 30th). */
 export declare const LAST_DAY = 31;
@@ -23,7 +29,7 @@ export interface Recurrence {
     /** Day of the month the occurrence is dated. */
     day: number;
     frequency: RecurrenceFrequency;
-    /** Custom rhythm: every `interval` months. Overrides the one of `frequency`. */
+    /** Custom rhythm: every `interval` periods of `frequency` (days, weeks, months, quarters, years…). */
     interval?: number;
     /** First month it applies to; earlier months are left alone. */
     startMonth: MonthKey;
@@ -41,7 +47,7 @@ export interface RecurrenceSettings {
     occurrences?: number;
     until?: MonthKey;
 }
-/** Months separating two occurrences of a series. */
+/** Days for a daily or weekly series, months otherwise, between two occurrences: `interval` counts periods of the frequency. */
 export declare function intervalOf(recurrence: Pick<Recurrence, 'frequency' | 'interval'>): number;
 export declare function isRecurrenceFrequency(value: unknown): value is RecurrenceFrequency;
 export declare function isRecurrenceList(value: unknown): value is Recurrence[];
@@ -49,11 +55,15 @@ export declare function isRecurrenceList(value: unknown): value is Recurrence[];
 export declare function sortRecurrences(recurrences: readonly Recurrence[]): Recurrence[];
 /** True when the recurrence produces an occurrence in that month. */
 export declare function appliesTo(recurrence: Recurrence, month: MonthKey): boolean;
+/** Every date the recurrence falls on in that month: one for a monthly-based series, several for a daily or weekly one. */
+export declare function occurrenceDates(recurrence: Recurrence, month: MonthKey): string[];
+/** The date of the last occurrence of a limited series; `undefined` when it never ends. */
+export declare function endDate(recurrence: Recurrence): string | undefined;
 /** The last month of a limited series; `undefined` when it never ends. */
 export declare function endMonth(recurrence: Recurrence): MonthKey | undefined;
 /** The occurrence's date, clamped to the length of the month. */
 export declare function occurrenceDate(recurrence: Recurrence, month: MonthKey): string;
-export declare function occurrenceOf(recurrence: Recurrence, month: MonthKey): TransactionInput;
+export declare function occurrenceOf(recurrence: Recurrence, month: MonthKey, date?: string): TransactionInput;
 /**
  * The series a transaction stands for when it is made recurring: it repeats on
  * its own day, from its own month on. Everything else is copied over, so the
@@ -63,7 +73,9 @@ export declare function recurrenceFromTransaction(transaction: TransactionInput,
 export declare function recurrencesFor(recurrences: readonly Recurrence[], month: MonthKey): Recurrence[];
 /**
  * The occurrences a month is still missing. Transactions already stamped with
- * a recurrence id are left untouched, however they were edited since.
+ * a recurrence id are left untouched, however they were edited since: a
+ * monthly-based series is complete as soon as one is stamped, a daily or
+ * weekly one once as many are stamped as the month has dates.
  */
 export declare function missingOccurrences(recurrences: readonly Recurrence[], month: MonthKey, transactions: readonly Transaction[]): TransactionInput[];
 //# sourceMappingURL=recurrence.d.ts.map

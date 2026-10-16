@@ -3,7 +3,9 @@ import {
   MAX_OCCURRENCES,
   MIN_OCCURRENCES,
   appliesTo,
+  endDate,
   endMonth,
+  occurrenceDates,
   isRecurrenceFrequency,
   isRecurrenceList,
   missingOccurrences,
@@ -36,7 +38,8 @@ describe('isRecurrenceFrequency', () => {
   })
 
   it('rejects unknown values', () => {
-    expect(isRecurrenceFrequency('weekly')).toBe(false)
+    expect(isRecurrenceFrequency('fortnightly')).toBe(false)
+    expect(isRecurrenceFrequency('weekly')).toBe(true)
     expect(isRecurrenceFrequency(undefined)).toBe(false)
   })
 })
@@ -66,7 +69,7 @@ describe('isRecurrenceList', () => {
     ['non-integer day', { day: 1.5 }],
     ['day below the first one', { day: 0 }],
     ['day past the last one', { day: 32 }],
-    ['frequency', { frequency: 'weekly' }],
+    ['frequency', { frequency: 'fortnightly' }],
     ['start month', { startMonth: '2026-13' }],
     ['non-integer occurrences', { occurrences: 2.5 }],
     ['non-numeric occurrences', { occurrences: 'trois' }],
@@ -167,6 +170,60 @@ describe('appliesTo', () => {
 
   it('accepts a valid interval and until month', () => {
     expect(isRecurrenceList([makeRecurrence({ interval: 60, until: '2030-01' })])).toBe(true)
+  })
+
+  it('supports daily and weekly frequencies with several dates per month', () => {
+    const weekly = makeRecurrence({ frequency: 'weekly', startMonth: '2026-10', day: 7 })
+    expect(occurrenceDates(weekly, '2026-10')).toEqual(['2026-10-07', '2026-10-14', '2026-10-21', '2026-10-28'])
+    expect(occurrenceDates(weekly, '2026-11')).toEqual(['2026-11-04', '2026-11-11', '2026-11-18', '2026-11-25'])
+    expect(occurrenceDates(weekly, '2026-09')).toEqual([])
+    const daily = makeRecurrence({ frequency: 'daily', startMonth: '2026-02', day: 27 })
+    expect(occurrenceDates(daily, '2026-02')).toEqual(['2026-02-27', '2026-02-28'])
+    expect(occurrenceDates(daily, '2026-03')).toHaveLength(31)
+  })
+
+  it('bounds a daily or weekly series by count and last month', () => {
+    const counted = makeRecurrence({ frequency: 'weekly', startMonth: '2026-10', day: 21, occurrences: 3 })
+    expect(occurrenceDates(counted, '2026-10')).toEqual(['2026-10-21', '2026-10-28'])
+    expect(occurrenceDates(counted, '2026-11')).toEqual(['2026-11-04'])
+    expect(occurrenceDates(counted, '2026-12')).toEqual([])
+    expect(endDate(counted)).toBe('2026-11-04')
+    expect(endMonth(counted)).toBe('2026-11')
+
+    const bounded = makeRecurrence({ frequency: 'daily', startMonth: '2026-10', day: 30, until: '2026-11' })
+    expect(occurrenceDates(bounded, '2026-11')).toHaveLength(30)
+    expect(occurrenceDates(bounded, '2026-12')).toEqual([])
+    expect(endDate(bounded)).toBe('2026-11-30')
+    expect(appliesTo(bounded, '2026-12')).toBe(false)
+  })
+
+  it('fills only the missing dates of a weekly series', () => {
+    const weekly = makeRecurrence({ frequency: 'weekly', startMonth: '2026-10', day: 7 })
+    expect(missingOccurrences([weekly], '2026-10', []).map((o) => o.date)).toEqual([
+      '2026-10-07', '2026-10-14', '2026-10-21', '2026-10-28',
+    ])
+    const existing = ['2026-10-07', '2026-10-21'].map((date, i) => ({ ...occurrenceOf(weekly, '2026-10', date), id: `t${i}` }))
+    expect(missingOccurrences([weekly], '2026-10', existing).map((o) => o.date)).toEqual(['2026-10-14', '2026-10-28'])
+    const complete = [...existing, ...['2026-10-14', '2026-10-28'].map((date, i) => ({ ...occurrenceOf(weekly, '2026-10', date), id: `u${i}` }))]
+    expect(missingOccurrences([weekly], '2026-10', complete)).toEqual([])
+  })
+
+  it('counts a custom interval in periods of the frequency', () => {
+    const everyTwoYears = makeRecurrence({ frequency: 'yearly', interval: 2, startMonth: '2026-03' })
+    expect(appliesTo(everyTwoYears, '2027-03')).toBe(false)
+    expect(appliesTo(everyTwoYears, '2028-03')).toBe(true)
+    const everyTwoQuarters = makeRecurrence({ frequency: 'quarterly', interval: 2, startMonth: '2026-01' })
+    expect(appliesTo(everyTwoQuarters, '2026-04')).toBe(false)
+    expect(appliesTo(everyTwoQuarters, '2026-07')).toBe(true)
+  })
+
+  it('applies a custom interval to daily and weekly series', () => {
+    const everyTenDays = makeRecurrence({ frequency: 'daily', interval: 10, startMonth: '2026-10', day: 5 })
+    expect(occurrenceDates(everyTenDays, '2026-10')).toEqual(['2026-10-05', '2026-10-15', '2026-10-25'])
+    expect(occurrenceDates(everyTenDays, '2026-11')).toEqual(['2026-11-04', '2026-11-14', '2026-11-24'])
+    const everyTwoWeeks = makeRecurrence({ frequency: 'weekly', interval: 2, startMonth: '2026-10', day: 1, occurrences: 3 })
+    expect(occurrenceDates(everyTwoWeeks, '2026-10')).toEqual(['2026-10-01', '2026-10-15', '2026-10-29'])
+    expect(endDate(everyTwoWeeks)).toBe('2026-10-29')
   })
 
   it('stops once the occurrence count is exhausted', () => {

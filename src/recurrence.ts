@@ -17,9 +17,13 @@ import {
 } from './month.js'
 import type { Transaction, TransactionInput, TransactionKind } from './transaction.js'
 
-export type RecurrenceFrequency = 'monthly' | 'bimonthly' | 'quarterly' | 'semiannual' | 'yearly'
+export type DayFrequency = 'daily' | 'weekly'
+export type MonthlyFrequency = 'monthly' | 'bimonthly' | 'quarterly' | 'semiannual' | 'yearly'
+export type RecurrenceFrequency = DayFrequency | MonthlyFrequency
 
 export const RECURRENCE_FREQUENCIES: readonly RecurrenceFrequency[] = [
+  'daily',
+  'weekly',
   'monthly',
   'bimonthly',
   'quarterly',
@@ -27,13 +31,24 @@ export const RECURRENCE_FREQUENCIES: readonly RecurrenceFrequency[] = [
   'yearly',
 ]
 
-/** Months separating two occurrences. */
-export const OCCURRENCE_INTERVAL: Record<RecurrenceFrequency, number> = {
+/** Months separating two occurrences of a monthly-based frequency. */
+export const OCCURRENCE_INTERVAL: Record<MonthlyFrequency, number> = {
   monthly: 1,
   bimonthly: 2,
   quarterly: 3,
   semiannual: 6,
   yearly: 12,
+}
+
+/** Days separating two occurrences of a daily or weekly frequency. */
+export const DAY_STEP: Record<DayFrequency, number> = {
+  daily: 1,
+  weekly: 7,
+}
+
+/** Daily and weekly series can hold several occurrences in one month. */
+export function isDayBased(frequency: RecurrenceFrequency): frequency is DayFrequency {
+  return frequency === 'daily' || frequency === 'weekly'
 }
 
 export const FIRST_DAY = 1
@@ -58,7 +73,7 @@ export interface Recurrence {
   /** Day of the month the occurrence is dated. */
   day: number
   frequency: RecurrenceFrequency
-  /** Custom rhythm: every `interval` months. Overrides the one of `frequency`. */
+  /** Custom rhythm: every `interval` periods of `frequency` (days, weeks, months, quarters, years…). */
   interval?: number
   /** First month it applies to; earlier months are left alone. */
   startMonth: MonthKey
@@ -79,9 +94,11 @@ export interface RecurrenceSettings {
   until?: MonthKey
 }
 
-/** Months separating two occurrences of a series. */
+/** Days for a daily or weekly series, months otherwise, between two occurrences: `interval` counts periods of the frequency. */
 export function intervalOf(recurrence: Pick<Recurrence, 'frequency' | 'interval'>): number {
-  return recurrence.interval ?? OCCURRENCE_INTERVAL[recurrence.frequency]
+  const { frequency } = recurrence
+  const count = recurrence.interval ?? 1
+  return count * (isDayBased(frequency) ? DAY_STEP[frequency] : OCCURRENCE_INTERVAL[frequency])
 }
 
 export function isRecurrenceFrequency(value: unknown): value is RecurrenceFrequency {
@@ -99,14 +116,71 @@ export function sortRecurrences(recurrences: readonly Recurrence[]): Recurrence[
 
 /** True when the recurrence produces an occurrence in that month. */
 export function appliesTo(recurrence: Recurrence, month: MonthKey): boolean {
+  return occurrenceDates(recurrence, month).length > 0
+}
+
+/** Every date the recurrence falls on in that month: one for a monthly-based series, several for a daily or weekly one. */
+export function occurrenceDates(recurrence: Recurrence, month: MonthKey): string[] {
+  if (isDayBased(recurrence.frequency)) return dayOccurrenceDates(recurrence, month)
+
   const rank = occurrenceRank(recurrence, month)
-  if (rank === null) return false
-  if (recurrence.until !== undefined && monthsBetween(month, recurrence.until) < 0) return false
-  return recurrence.occurrences === undefined || rank < recurrence.occurrences
+  if (rank === null) return []
+  if (recurrence.until !== undefined && monthsBetween(month, recurrence.until) < 0) return []
+  if (recurrence.occurrences !== undefined && rank >= recurrence.occurrences) return []
+  return [occurrenceDate(recurrence, month)]
+}
+
+const MS_PER_DAY = 86_400_000
+
+function dayNumber(isoDate: string): number {
+  const [year, month, day] = isoDate.split('-').map(Number)
+  return Math.round(Date.UTC(year, month - 1, day) / MS_PER_DAY)
+}
+
+function isoDateOfDayNumber(day: number): string {
+  return new Date(day * MS_PER_DAY).toISOString().slice(0, 10)
+}
+
+/** Day number of the last day a daily or weekly series can reach, bounded by its count and its last month. */
+function lastDayNumber(recurrence: Recurrence): number | undefined {
+  const step = intervalOf(recurrence)
+  const start = dayNumber(occurrenceDate(recurrence, recurrence.startMonth))
+  const byCount = recurrence.occurrences === undefined ? undefined : start + (recurrence.occurrences - 1) * step
+  const byMonth =
+    recurrence.until === undefined ? undefined : dayNumber(`${recurrence.until}-${daysInMonth(recurrence.until)}`)
+  if (byCount === undefined) return byMonth
+  return byMonth === undefined ? byCount : Math.min(byCount, byMonth)
+}
+
+function dayOccurrenceDates(recurrence: Recurrence, month: MonthKey): string[] {
+  const step = intervalOf(recurrence)
+  const start = dayNumber(occurrenceDate(recurrence, recurrence.startMonth))
+  const monthStart = dayNumber(`${month}-01`)
+  const monthEnd = monthStart + daysInMonth(month) - 1
+  const limit = Math.min(monthEnd, lastDayNumber(recurrence) ?? monthEnd)
+
+  const first = start + Math.max(0, Math.ceil((monthStart - start) / step)) * step
+  const dates: string[] = []
+  for (let day = first; day <= limit; day += step) dates.push(isoDateOfDayNumber(day))
+  return dates
+}
+
+/** The date of the last occurrence of a limited series; `undefined` when it never ends. */
+export function endDate(recurrence: Recurrence): string | undefined {
+  if (isDayBased(recurrence.frequency)) {
+    const last = lastDayNumber(recurrence)
+    return last === undefined ? undefined : isoDateOfDayNumber(last)
+  }
+  const month = endMonth(recurrence)
+  return month === undefined ? undefined : occurrenceDate({ ...recurrence, day: LAST_DAY }, month)
 }
 
 /** The last month of a limited series; `undefined` when it never ends. */
 export function endMonth(recurrence: Recurrence): MonthKey | undefined {
+  if (isDayBased(recurrence.frequency)) {
+    const last = lastDayNumber(recurrence)
+    return last === undefined ? undefined : monthKeyOf(isoDateOfDayNumber(last))
+  }
   const byCount =
     recurrence.occurrences === undefined
       ? undefined
@@ -131,9 +205,13 @@ export function occurrenceDate(recurrence: Recurrence, month: MonthKey): string 
   return `${month}-${String(day).padStart(2, '0')}`
 }
 
-export function occurrenceOf(recurrence: Recurrence, month: MonthKey): TransactionInput {
+export function occurrenceOf(
+  recurrence: Recurrence,
+  month: MonthKey,
+  date: string = occurrenceDate(recurrence, month),
+): TransactionInput {
   return {
-    date: occurrenceDate(recurrence, month),
+    date,
     description: recurrence.description,
     category: recurrence.category,
     kind: recurrence.kind,
@@ -174,22 +252,38 @@ export function recurrencesFor(
 
 /**
  * The occurrences a month is still missing. Transactions already stamped with
- * a recurrence id are left untouched, however they were edited since.
+ * a recurrence id are left untouched, however they were edited since: a
+ * monthly-based series is complete as soon as one is stamped, a daily or
+ * weekly one once as many are stamped as the month has dates.
  */
 export function missingOccurrences(
   recurrences: readonly Recurrence[],
   month: MonthKey,
   transactions: readonly Transaction[],
 ): TransactionInput[] {
-  const applied = new Set(
-    transactions
-      .map((transaction) => transaction.recurrenceId)
-      .filter((id): id is string => id !== undefined),
-  )
+  const missing: TransactionInput[] = []
 
-  return recurrencesFor(recurrences, month)
-    .filter((recurrence) => !applied.has(recurrence.id))
-    .map((recurrence) => occurrenceOf(recurrence, month))
+  for (const recurrence of recurrences) {
+    const dates = occurrenceDates(recurrence, month)
+    if (dates.length === 0) continue
+
+    const stamped = transactions.filter((transaction) => transaction.recurrenceId === recurrence.id)
+    if (!isDayBased(recurrence.frequency)) {
+      if (stamped.length === 0) missing.push(occurrenceOf(recurrence, month, dates[0]))
+      continue
+    }
+
+    const taken = new Set(stamped.map((transaction) => transaction.date))
+    let room = dates.length - stamped.length
+    for (const date of dates) {
+      if (room <= 0) break
+      if (taken.has(date)) continue
+      missing.push(occurrenceOf(recurrence, month, date))
+      room--
+    }
+  }
+
+  return missing
 }
 
 function isRecurrence(value: unknown): value is Recurrence {

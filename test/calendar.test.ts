@@ -215,13 +215,28 @@ describe('syncCalendar', () => {
     expect(out.uploaded).toBe(1)
     expect(s.events.get(href)?.ics).toContain('INTERVAL=1;')
 
-    out = await syncCalendar(c, [], out.baseline, undefined, [{ ...series, interval: 5, until: '2027-02' }])
+    out = await syncCalendar(c, [], out.baseline, undefined, [{ ...series, frequency: 'monthly', interval: 5, until: '2027-02' }])
     expect(out.uploaded).toBe(1)
     expect(s.events.get(href)?.ics.replace(/\r\n /g, '')).toContain('INTERVAL=5;BYMONTHDAY=28,29,30,31;BYSETPOS=-1;UNTIL=20270228')
+
+    out = await syncCalendar(c, [], out.baseline, undefined, [{ ...series, frequency: 'weekly', interval: 2 }])
+    expect(out.uploaded).toBe(1)
+    expect(s.events.get(href)?.ics).toContain('FREQ=WEEKLY;INTERVAL=2;')
 
     out = await syncCalendar(c, [], out.baseline, undefined, [])
     expect(out.deleted).toBe(1)
     expect(s.events.size).toBe(0)
+  })
+
+  it('publishes a weekly series with a weekly rule', async () => {
+    const s = fakeServer()
+    const series: Recurrence = {
+      id: 'w1', description: 'Marché', category: 'Alimentation', kind: 'expense', amount: 20,
+      day: 7, frequency: 'weekly', startMonth: '2026-10', occurrences: 10,
+    }
+    await syncCalendar(client(s), [], {}, undefined, [series])
+    const [[, event]] = [...s.events]
+    expect(event.ics).toContain('RRULE:FREQ=WEEKLY;INTERVAL=1;COUNT=10')
   })
 
   it('moves a trashed transaction through the calendar and back, or removes it when emptied', async () => {

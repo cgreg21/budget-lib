@@ -13,7 +13,7 @@ par exemple, que NativeScript refuse).
 | --- | --- |
 | `transaction` | modèle d'une transaction, validation, tri, totaux, filtre et recherche sans accents |
 | `month` | clés de mois (`2026-09`), navigation, dates et jours du mois |
-| `recurrence` | récurrences (mensuelle, bimestrielle, trimestrielle, semestrielle, annuelle, intervalle personnalisé, fin par nombre d'occurrences ou dernier mois) et génération des occurrences |
+| `recurrence` | récurrences (quotidienne, hebdomadaire, mensuelle, bimestrielle, trimestrielle, semestrielle, annuelle, intervalle personnalisé en périodes de chaque fréquence, fin par nombre d'occurrences ou dernier mois) et génération des occurrences |
 | `category` | catégories, catégories par défaut, lecture de l'ancien format |
 | `category-icons` | noms d'icônes de catégorie partagés et conversion des anciens emoji |
 | `balance` | seuils du solde et niveau (`critical` → `high`) |
