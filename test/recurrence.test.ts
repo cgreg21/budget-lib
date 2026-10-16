@@ -118,6 +118,57 @@ describe('appliesTo', () => {
     expect(appliesTo(recurrence, '2026-04')).toBe(true)
   })
 
+  it('supports bimonthly and semiannual frequencies', () => {
+    const bimonthly = makeRecurrence({ frequency: 'bimonthly', startMonth: '2026-01' })
+    expect(appliesTo(bimonthly, '2026-02')).toBe(false)
+    expect(appliesTo(bimonthly, '2026-03')).toBe(true)
+    const semiannual = makeRecurrence({ frequency: 'semiannual', startMonth: '2026-01' })
+    expect(appliesTo(semiannual, '2026-06')).toBe(false)
+    expect(appliesTo(semiannual, '2026-07')).toBe(true)
+  })
+
+  it('applies a custom interval over the frequency one', () => {
+    const recurrence = makeRecurrence({ interval: 5, startMonth: '2026-01' })
+    expect(appliesTo(recurrence, '2026-05')).toBe(false)
+    expect(appliesTo(recurrence, '2026-06')).toBe(true)
+    expect(endMonth({ ...recurrence, occurrences: 3 })).toBe('2026-11')
+  })
+
+  it('stops after the until month, even for a never-ending series', () => {
+    const recurrence = makeRecurrence({ startMonth: '2026-01', until: '2026-03' })
+    expect(appliesTo(recurrence, '2026-03')).toBe(true)
+    expect(appliesTo(recurrence, '2026-04')).toBe(false)
+    expect(endMonth(recurrence)).toBe('2026-03')
+  })
+
+  it('ends at the earliest of the count and the until month', () => {
+    expect(endMonth(makeRecurrence({ startMonth: '2026-01', occurrences: 3, until: '2026-12' }))).toBe('2026-03')
+    expect(endMonth(makeRecurrence({ startMonth: '2026-01', occurrences: 12, until: '2026-04' }))).toBe('2026-04')
+    const both = makeRecurrence({ startMonth: '2026-01', occurrences: 12, until: '2026-04' })
+    expect(appliesTo(both, '2026-05')).toBe(false)
+  })
+
+  it('copies the interval and the until month from the settings', () => {
+    const transaction = { date: '2026-02-10', description: 'x', category: 'c', kind: 'expense' as const, amount: 1 }
+    expect(recurrenceFromTransaction(transaction, { frequency: 'monthly', interval: 4, until: '2027-01' })).toMatchObject({
+      interval: 4,
+      until: '2027-01',
+    })
+  })
+
+  it.each([
+    ['zero interval', { interval: 0 }],
+    ['too large interval', { interval: 61 }],
+    ['fractional interval', { interval: 1.5 }],
+    ['malformed until', { until: '2026-13' }],
+  ])('rejects %s', (_label, overrides) => {
+    expect(isRecurrenceList([makeRecurrence(overrides as Partial<Recurrence>)])).toBe(false)
+  })
+
+  it('accepts a valid interval and until month', () => {
+    expect(isRecurrenceList([makeRecurrence({ interval: 60, until: '2030-01' })])).toBe(true)
+  })
+
   it('stops once the occurrence count is exhausted', () => {
     const recurrence = makeRecurrence({ startMonth: '2026-01', occurrences: 2 })
     expect(appliesTo(recurrence, '2026-01')).toBe(true)

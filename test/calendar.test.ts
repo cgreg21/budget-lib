@@ -215,6 +215,10 @@ describe('syncCalendar', () => {
     expect(out.uploaded).toBe(1)
     expect(s.events.get(href)?.ics).toContain('INTERVAL=1;')
 
+    out = await syncCalendar(c, [], out.baseline, undefined, [{ ...series, interval: 5, until: '2027-02' }])
+    expect(out.uploaded).toBe(1)
+    expect(s.events.get(href)?.ics.replace(/\r\n /g, '')).toContain('INTERVAL=5;BYMONTHDAY=28,29,30,31;BYSETPOS=-1;UNTIL=20270228')
+
     out = await syncCalendar(c, [], out.baseline, undefined, [])
     expect(out.deleted).toBe(1)
     expect(s.events.size).toBe(0)

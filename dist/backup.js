@@ -137,8 +137,9 @@ function transactionSignature({ date, description, category, kind, amount }) {
     return [date, description, category, kind, amount].join('|');
 }
 function recurrenceSignature(recurrence) {
-    const { description, category, kind, amount, day, frequency, startMonth, occurrences } = recurrence;
-    return [description, category, kind, amount, day, frequency, startMonth, occurrences ?? ''].join('|');
+    const { description, category, kind, amount, day, frequency, startMonth, occurrences, interval, until } = recurrence;
+    const base = [description, category, kind, amount, day, frequency, startMonth, occurrences ?? ''];
+    return (interval !== undefined || until !== undefined ? [...base, interval ?? '', until ?? ''] : base).join('|');
 }
 function parseCategories(value) {
     if (isCategoryList(value))

@@ -6,7 +6,8 @@
  * event without them is not ours and is ignored.
  */
 import { isCategoryList, type Category } from './category.js'
-import { occurrenceDate, type Recurrence } from './recurrence.js'
+import { daysInMonth } from './month.js'
+import { endMonth, intervalOf, occurrenceDate, type Recurrence } from './recurrence.js'
 import type { Transaction, TransactionKind, TrashedTransaction } from './transaction.js'
 
 export const UID_SUFFIX = '@budget'
@@ -170,8 +171,6 @@ export function categoriesToIcs(categories: readonly Category[], now: Date = new
   return `${lines.map(fold).join('\r\n')}\r\n`
 }
 
-const RECURRENCE_INTERVAL: Record<Recurrence['frequency'], number> = { monthly: 1, quarterly: 3, yearly: 12 }
-
 /** UID of the recurring event of a series (without `UID_SUFFIX`). */
 export function recurrenceEventId(recurrenceId: string): string {
   return `recurrence-${recurrenceId}`
@@ -179,12 +178,17 @@ export function recurrenceEventId(recurrenceId: string): string {
 
 /** The RRULE of a series; days past the 28th fall back on the last day of shorter months, like the app does. */
 function recurrenceRule(recurrence: Recurrence): string {
-  const parts = ['FREQ=MONTHLY', `INTERVAL=${RECURRENCE_INTERVAL[recurrence.frequency]}`]
+  const parts = ['FREQ=MONTHLY', `INTERVAL=${intervalOf(recurrence)}`]
   if (recurrence.day > 28) {
     const days = Array.from({ length: recurrence.day - 27 }, (_, i) => 28 + i)
     parts.push(`BYMONTHDAY=${days.join(',')}`, 'BYSETPOS=-1')
   }
-  if (recurrence.occurrences !== undefined) parts.push(`COUNT=${recurrence.occurrences}`)
+  const last = endMonth(recurrence)
+  if (recurrence.until !== undefined && last !== undefined) {
+    parts.push(`UNTIL=${compactDate(`${last}-${String(daysInMonth(last)).padStart(2, '0')}`)}`)
+  } else if (recurrence.occurrences !== undefined) {
+    parts.push(`COUNT=${recurrence.occurrences}`)
+  }
   return parts.join(';')
 }
 

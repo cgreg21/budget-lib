@@ -9,13 +9,17 @@
 import { dayOf, daysInMonth, isMonthKey, monthKeyOf, monthsBetween, shiftMonth, } from './month.js';
 export const RECURRENCE_FREQUENCIES = [
     'monthly',
+    'bimonthly',
     'quarterly',
+    'semiannual',
     'yearly',
 ];
 /** Months separating two occurrences. */
-const OCCURRENCE_INTERVAL = {
+export const OCCURRENCE_INTERVAL = {
     monthly: 1,
+    bimonthly: 2,
     quarterly: 3,
+    semiannual: 6,
     yearly: 12,
 };
 export const FIRST_DAY = 1;
@@ -24,6 +28,13 @@ export const LAST_DAY = 31;
 export const MIN_OCCURRENCES = 1;
 /** 600 monthly occurrences: fifty years, far beyond any budget plan. */
 export const MAX_OCCURRENCES = 600;
+export const MIN_INTERVAL = 1;
+/** A custom rhythm of up to five years between two occurrences. */
+export const MAX_INTERVAL = 60;
+/** Months separating two occurrences of a series. */
+export function intervalOf(recurrence) {
+    return recurrence.interval ?? OCCURRENCE_INTERVAL[recurrence.frequency];
+}
 export function isRecurrenceFrequency(value) {
     return RECURRENCE_FREQUENCIES.includes(value);
 }
@@ -39,21 +50,27 @@ export function appliesTo(recurrence, month) {
     const rank = occurrenceRank(recurrence, month);
     if (rank === null)
         return false;
+    if (recurrence.until !== undefined && monthsBetween(month, recurrence.until) < 0)
+        return false;
     return recurrence.occurrences === undefined || rank < recurrence.occurrences;
 }
 /** The last month of a limited series; `undefined` when it never ends. */
 export function endMonth(recurrence) {
-    if (recurrence.occurrences === undefined)
-        return undefined;
-    const steps = (recurrence.occurrences - 1) * OCCURRENCE_INTERVAL[recurrence.frequency];
-    return shiftMonth(recurrence.startMonth, steps);
+    const byCount = recurrence.occurrences === undefined
+        ? undefined
+        : shiftMonth(recurrence.startMonth, (recurrence.occurrences - 1) * intervalOf(recurrence));
+    if (recurrence.until === undefined)
+        return byCount;
+    if (byCount === undefined)
+        return recurrence.until;
+    return monthsBetween(byCount, recurrence.until) < 0 ? recurrence.until : byCount;
 }
 /** Position of a month in the series, 0 for the first one; `null` when it is not due. */
 function occurrenceRank(recurrence, month) {
     const distance = monthsBetween(recurrence.startMonth, month);
     if (distance < 0)
         return null;
-    const interval = OCCURRENCE_INTERVAL[recurrence.frequency];
+    const interval = intervalOf(recurrence);
     return distance % interval === 0 ? distance / interval : null;
 }
 /** The occurrence's date, clamped to the length of the month. */
@@ -86,6 +103,8 @@ export function recurrenceFromTransaction(transaction, settings) {
         frequency: settings.frequency,
         startMonth: monthKeyOf(transaction.date),
         occurrences: settings.occurrences,
+        ...(settings.interval === undefined ? {} : { interval: settings.interval }),
+        ...(settings.until === undefined ? {} : { until: settings.until }),
     };
 }
 export function recurrencesFor(recurrences, month) {
@@ -122,6 +141,12 @@ function isRecurrence(value) {
         (candidate.occurrences === undefined ||
             (typeof candidate.occurrences === 'number' &&
                 Number.isInteger(candidate.occurrences) &&
-                candidate.occurrences >= MIN_OCCURRENCES)));
+                candidate.occurrences >= MIN_OCCURRENCES)) &&
+        (candidate.interval === undefined ||
+            (typeof candidate.interval === 'number' &&
+                Number.isInteger(candidate.interval) &&
+                candidate.interval >= MIN_INTERVAL &&
+                candidate.interval <= MAX_INTERVAL)) &&
+        (candidate.until === undefined || isMonthKey(candidate.until)));
 }
 //# sourceMappingURL=recurrence.js.map

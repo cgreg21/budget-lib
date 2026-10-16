@@ -17,18 +17,22 @@ import {
 } from './month.js'
 import type { Transaction, TransactionInput, TransactionKind } from './transaction.js'
 
-export type RecurrenceFrequency = 'monthly' | 'quarterly' | 'yearly'
+export type RecurrenceFrequency = 'monthly' | 'bimonthly' | 'quarterly' | 'semiannual' | 'yearly'
 
 export const RECURRENCE_FREQUENCIES: readonly RecurrenceFrequency[] = [
   'monthly',
+  'bimonthly',
   'quarterly',
+  'semiannual',
   'yearly',
 ]
 
 /** Months separating two occurrences. */
-const OCCURRENCE_INTERVAL: Record<RecurrenceFrequency, number> = {
+export const OCCURRENCE_INTERVAL: Record<RecurrenceFrequency, number> = {
   monthly: 1,
+  bimonthly: 2,
   quarterly: 3,
+  semiannual: 6,
   yearly: 12,
 }
 
@@ -40,6 +44,10 @@ export const MIN_OCCURRENCES = 1
 /** 600 monthly occurrences: fifty years, far beyond any budget plan. */
 export const MAX_OCCURRENCES = 600
 
+export const MIN_INTERVAL = 1
+/** A custom rhythm of up to five years between two occurrences. */
+export const MAX_INTERVAL = 60
+
 export interface Recurrence {
   id: string
   description: string
@@ -50,10 +58,14 @@ export interface Recurrence {
   /** Day of the month the occurrence is dated. */
   day: number
   frequency: RecurrenceFrequency
+  /** Custom rhythm: every `interval` months. Overrides the one of `frequency`. */
+  interval?: number
   /** First month it applies to; earlier months are left alone. */
   startMonth: MonthKey
   /** How many occurrences the series counts. Absent means it never ends. */
   occurrences?: number
+  /** Last month the series applies to; combined with `occurrences`, the earliest end wins. */
+  until?: MonthKey
 }
 
 /** A recurrence that has not been persisted yet (no id assigned). */
@@ -62,7 +74,14 @@ export type RecurrenceInput = Omit<Recurrence, 'id'>
 /** The rhythm a transaction form asks for; `null` stands for a one-off transaction. */
 export interface RecurrenceSettings {
   frequency: RecurrenceFrequency
+  interval?: number
   occurrences?: number
+  until?: MonthKey
+}
+
+/** Months separating two occurrences of a series. */
+export function intervalOf(recurrence: Pick<Recurrence, 'frequency' | 'interval'>): number {
+  return recurrence.interval ?? OCCURRENCE_INTERVAL[recurrence.frequency]
 }
 
 export function isRecurrenceFrequency(value: unknown): value is RecurrenceFrequency {
@@ -82,14 +101,19 @@ export function sortRecurrences(recurrences: readonly Recurrence[]): Recurrence[
 export function appliesTo(recurrence: Recurrence, month: MonthKey): boolean {
   const rank = occurrenceRank(recurrence, month)
   if (rank === null) return false
+  if (recurrence.until !== undefined && monthsBetween(month, recurrence.until) < 0) return false
   return recurrence.occurrences === undefined || rank < recurrence.occurrences
 }
 
 /** The last month of a limited series; `undefined` when it never ends. */
 export function endMonth(recurrence: Recurrence): MonthKey | undefined {
-  if (recurrence.occurrences === undefined) return undefined
-  const steps = (recurrence.occurrences - 1) * OCCURRENCE_INTERVAL[recurrence.frequency]
-  return shiftMonth(recurrence.startMonth, steps)
+  const byCount =
+    recurrence.occurrences === undefined
+      ? undefined
+      : shiftMonth(recurrence.startMonth, (recurrence.occurrences - 1) * intervalOf(recurrence))
+  if (recurrence.until === undefined) return byCount
+  if (byCount === undefined) return recurrence.until
+  return monthsBetween(byCount, recurrence.until) < 0 ? recurrence.until : byCount
 }
 
 /** Position of a month in the series, 0 for the first one; `null` when it is not due. */
@@ -97,7 +121,7 @@ function occurrenceRank(recurrence: Recurrence, month: MonthKey): number | null 
   const distance = monthsBetween(recurrence.startMonth, month)
   if (distance < 0) return null
 
-  const interval = OCCURRENCE_INTERVAL[recurrence.frequency]
+  const interval = intervalOf(recurrence)
   return distance % interval === 0 ? distance / interval : null
 }
 
@@ -136,6 +160,8 @@ export function recurrenceFromTransaction(
     frequency: settings.frequency,
     startMonth: monthKeyOf(transaction.date),
     occurrences: settings.occurrences,
+    ...(settings.interval === undefined ? {} : { interval: settings.interval }),
+    ...(settings.until === undefined ? {} : { until: settings.until }),
   }
 }
 
@@ -186,6 +212,12 @@ function isRecurrence(value: unknown): value is Recurrence {
     (candidate.occurrences === undefined ||
       (typeof candidate.occurrences === 'number' &&
         Number.isInteger(candidate.occurrences) &&
-        candidate.occurrences >= MIN_OCCURRENCES))
+        candidate.occurrences >= MIN_OCCURRENCES)) &&
+    (candidate.interval === undefined ||
+      (typeof candidate.interval === 'number' &&
+        Number.isInteger(candidate.interval) &&
+        candidate.interval >= MIN_INTERVAL &&
+        candidate.interval <= MAX_INTERVAL)) &&
+    (candidate.until === undefined || isMonthKey(candidate.until))
   )
 }

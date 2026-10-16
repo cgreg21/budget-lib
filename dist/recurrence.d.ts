@@ -1,13 +1,18 @@
 import { type MonthKey } from './month.js';
 import type { Transaction, TransactionInput, TransactionKind } from './transaction.js';
-export type RecurrenceFrequency = 'monthly' | 'quarterly' | 'yearly';
+export type RecurrenceFrequency = 'monthly' | 'bimonthly' | 'quarterly' | 'semiannual' | 'yearly';
 export declare const RECURRENCE_FREQUENCIES: readonly RecurrenceFrequency[];
+/** Months separating two occurrences. */
+export declare const OCCURRENCE_INTERVAL: Record<RecurrenceFrequency, number>;
 export declare const FIRST_DAY = 1;
 /** Longest month; shorter months clamp the day down (a 31 becomes the 30th). */
 export declare const LAST_DAY = 31;
 export declare const MIN_OCCURRENCES = 1;
 /** 600 monthly occurrences: fifty years, far beyond any budget plan. */
 export declare const MAX_OCCURRENCES = 600;
+export declare const MIN_INTERVAL = 1;
+/** A custom rhythm of up to five years between two occurrences. */
+export declare const MAX_INTERVAL = 60;
 export interface Recurrence {
     id: string;
     description: string;
@@ -18,18 +23,26 @@ export interface Recurrence {
     /** Day of the month the occurrence is dated. */
     day: number;
     frequency: RecurrenceFrequency;
+    /** Custom rhythm: every `interval` months. Overrides the one of `frequency`. */
+    interval?: number;
     /** First month it applies to; earlier months are left alone. */
     startMonth: MonthKey;
     /** How many occurrences the series counts. Absent means it never ends. */
     occurrences?: number;
+    /** Last month the series applies to; combined with `occurrences`, the earliest end wins. */
+    until?: MonthKey;
 }
 /** A recurrence that has not been persisted yet (no id assigned). */
 export type RecurrenceInput = Omit<Recurrence, 'id'>;
 /** The rhythm a transaction form asks for; `null` stands for a one-off transaction. */
 export interface RecurrenceSettings {
     frequency: RecurrenceFrequency;
+    interval?: number;
     occurrences?: number;
+    until?: MonthKey;
 }
+/** Months separating two occurrences of a series. */
+export declare function intervalOf(recurrence: Pick<Recurrence, 'frequency' | 'interval'>): number;
 export declare function isRecurrenceFrequency(value: unknown): value is RecurrenceFrequency;
 export declare function isRecurrenceList(value: unknown): value is Recurrence[];
 /** Alphabetical, so the options list keeps a stable order. */
